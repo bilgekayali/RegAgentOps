@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 class ApprovalReplayLedger:
-    """Append-only redemption ledger for one-time approval packages."""
+    """Append-only, one-time redemption ledger keyed by approval requirement."""
 
     def __init__(self, database: str | Path = ":memory:") -> None:
         self._database = str(database)
@@ -14,9 +14,9 @@ class ApprovalReplayLedger:
         self._connection.execute(
             """
             CREATE TABLE IF NOT EXISTS approval_redemptions (
-                approval_package_digest TEXT PRIMARY KEY,
+                requirement_digest TEXT PRIMARY KEY,
+                approval_package_digest TEXT NOT NULL UNIQUE,
                 institution_id TEXT NOT NULL,
-                requirement_digest TEXT NOT NULL,
                 request_digest TEXT NOT NULL,
                 redeemed_at TEXT NOT NULL
             )
@@ -40,17 +40,17 @@ class ApprovalReplayLedger:
             self._connection.execute(
                 """
                 INSERT INTO approval_redemptions (
+                    requirement_digest,
                     approval_package_digest,
                     institution_id,
-                    requirement_digest,
                     request_digest,
                     redeemed_at
                 ) VALUES (?, ?, ?, ?, ?)
                 """,
                 (
+                    requirement_digest,
                     approval_package_digest,
                     institution_id,
-                    requirement_digest,
                     request_digest,
                     redeemed_at,
                 ),
