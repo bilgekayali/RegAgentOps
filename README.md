@@ -14,7 +14,7 @@ The project is designed for regulated and high-assurance environments such as fi
 
 Current version: **v0.2.0 — Authenticated Agent Identity**.
 
-## Why this exists
+## Purpose
 
 Agentic systems can request tools that read enterprise data, call APIs, modify records, or trigger business processes. RegAgentOps places deterministic governance and identity verification before any future enforcement/execution layer.
 
