@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://regagentops.dev/schemas/signed-approval-statement.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["statement", "key_id", "algorithm", "signature_base64url", "signing_document_digest", "schema_version"],
+  "properties": {
+    "statement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approval_id", "institution_id", "requirement_digest", "request_digest", "approver_id", "authority_grant_digest", "vote", "issued_at", "expires_at", "rationale_digest", "schema_version"],
+      "properties": {
+        "approval_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "institution_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "requirement_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "request_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "approver_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "authority_grant_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "vote": {"enum": ["APPROVE", "DENY"]},
+        "issued_at": {"type": "string", "format": "date-time"},
+        "expires_at": {"type": "string", "format": "date-time"},
+        "rationale_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "schema_version": {"const": "regagentops.approval-statement.v1"}
+      }
+    },
+    "key_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "algorithm": {"const": "Ed25519"},
+    "signature_base64url": {"type": "string", "minLength": 86, "maxLength": 86},
+    "signing_document_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "schema_version": {"const": "regagentops.signed-approval-statement.v1"}
+  }
+}
