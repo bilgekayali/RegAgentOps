@@ -278,14 +278,27 @@ class IdentityTests(unittest.TestCase):
         statement = verify_workload_identity(signed, trust_bundle=self.trust_bundle, now=NOW_TEXT)
         self.assertEqual(statement.agent_id, "ops-assistant")
 
-    def test_workload_identity_rejects_disabled_key(self) -> None:
-        disabled = WorkloadIdentityTrustBundle(
-            institution_id="bank-demo",
-            keys=(replace(self.trust_bundle.keys[0], status=TrustKeyStatus.DISABLED),),
+    def test_workload_identity_rejects_disabled_matching_key(self) -> None:
+        other_private = Ed25519PrivateKey.generate()
+        other_public = other_private.public_key().public_bytes(
+            serialization.Encoding.Raw,
+            serialization.PublicFormat.Raw,
         )
-        with self.assertRaises(ValueError):
-            # A bundle with no active key is invalid before verification.
-            verify_workload_identity(self._signed_workload(), trust_bundle=disabled, now=NOW_TEXT)
+        bundle = WorkloadIdentityTrustBundle(
+            institution_id="bank-demo",
+            keys=(
+                replace(self.trust_bundle.keys[0], status=TrustKeyStatus.DISABLED),
+                WorkloadIdentityTrustKey(
+                    institution_id="bank-demo",
+                    key_id="workload-key-2",
+                    public_key_base64url=_b64url(other_public),
+                    not_before="2025-12-31T00:00:00Z",
+                    not_after="2026-12-31T00:00:00Z",
+                ),
+            ),
+        )
+        with self.assertRaises(WorkloadIdentityError):
+            verify_workload_identity(self._signed_workload(), trust_bundle=bundle, now=NOW_TEXT)
 
     def test_workload_identity_rejects_tampered_statement(self) -> None:
         signed = self._signed_workload()
