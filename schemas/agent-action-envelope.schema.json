@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://regagentops.dev/schemas/agent-action-envelope.schema.json",
+  "title": "RegAgentOps Agent Action Envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "request_id", "institution_id", "agent_id", "human_owner_id",
+    "model_provider", "model_id", "tool_id", "action", "resource", "data_classification",
+    "business_purpose", "environment", "risk_tier", "input_digest", "requested_at"
+  ],
+  "properties": {
+    "schema_version": {"const": "regagentops.agent-action-envelope.v1"},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "institution_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "agent_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "human_owner_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "model_provider": {"type": "string", "minLength": 1, "maxLength": 256},
+    "model_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "tool_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "action": {"type": "string", "minLength": 1, "maxLength": 256},
+    "resource": {"type": "string", "minLength": 1, "maxLength": 512},
+    "data_classification": {"enum": ["public", "internal", "confidential", "restricted"]},
+    "business_purpose": {"type": "string", "minLength": 1, "maxLength": 512},
+    "environment": {"enum": ["sandbox", "development", "test", "staging", "production"]},
+    "risk_tier": {"enum": ["low", "moderate", "high", "critical"]},
+    "input_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "requested_at": {"type": "string", "format": "date-time", "pattern": "Z$"}
+  }
+}
