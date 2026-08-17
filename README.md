@@ -35,6 +35,10 @@ HumanIdentityAssertion          SignedWorkloadIdentity
                          v
              AuthenticatedAgentIdentity
                          |
+               institution signature
+                         v
+          SignedAuthenticatedAgentIdentity
+                         |
 AgentActionEnvelope -----+----- Institution Policy Bundle
                          |
                          v
@@ -54,26 +58,28 @@ v0.2 adds two independent identity sources:
 - a human identity assertion verified from an OIDC ID token against operator-supplied pinned JWKS and a registered owner→provider→subject mapping;
 - a short-lived workload identity statement signed by an institution-owned Ed25519 signer and verified against an institution trust bundle.
 
-The two identity sources are bound to the registered agent and model identity. The resulting authenticated context expires at the earlier underlying identity expiry. If the context expires, crosses institutions, does not match the request, or the registered agent changes, authenticated authorization fails closed.
+The two sources are bound to the registered agent/model. The resulting `AuthenticatedAgentIdentity` expires at the earlier underlying identity expiry, but that raw context is **not** accepted as policy authority. It must itself be domain-separated and institution-signed as `SignedAuthenticatedAgentIdentity`. Unsigned, tampered, expired, cross-institution, request-mismatched, or registration-drifted contexts fail closed.
 
-The policy core still emits exactly one of four decisions:
+The policy core emits exactly one of four decisions:
 
 - `ALLOW`
 - `DENY`
 - `REQUIRE_HUMAN_APPROVAL`
 - `ALLOW_WITH_CONSTRAINTS`
 
-When multiple rules match, conservative precedence is deterministic:
+Conservative precedence is deterministic:
 
 `DENY > REQUIRE_HUMAN_APPROVAL > ALLOW_WITH_CONSTRAINTS > ALLOW`
 
-No matching rule means **DENY**. An identity failure also means **DENY**, before an allow rule can take effect.
+No matching rule means **DENY**. Identity verification failure also means a non-executable **DENY** before an allow rule can take effect.
 
 ## v0.2 identity boundary
 
 OIDC verification requires a configured HTTPS issuer and client id, an explicit asymmetric algorithm allowlist, an exact `kid`, pinned JWKS, exact registered subject and transaction nonce, audience checks, time checks, and optional ACR policy. Dynamic key-selection headers (`jku`, `x5u`, `crit`) are rejected. Raw bearer tokens and raw nonces are not retained in evidence artifacts; SHA-256 bindings are retained instead.
 
-Workload identity statements bind institution, agent, human owner, model provider/model id, workload id, challenge digest, issuance time, and expiry. Their lifetime is capped at 15 minutes. RegAgentOps defines a provider-neutral signing interface so an institution can keep the private key in an HSM/KMS-backed or otherwise institution-controlled signing boundary.
+Workload identity statements bind institution, agent, human owner, model provider/model id, workload id, challenge digest, issuance time, and expiry. Their lifetime is capped at 15 minutes. Provider-neutral signing interfaces allow private-key custody to remain in an HSM/KMS-backed or otherwise institution-controlled signing boundary.
+
+The final authenticated context is also Ed25519-signed using a distinct signing-document purpose. This closes the boundary between “a dataclass that looks authenticated” and identity evidence the policy engine is willing to trust.
 
 See [docs/IDENTITY.md](docs/IDENTITY.md) for the full trust and failure model.
 
@@ -88,11 +94,12 @@ v0.2 is still authorization/identity-only and simulation-first:
 - no autonomous target/resource discovery;
 - no network-capable MCP connection in the authorization core;
 - no online OIDC discovery or JWKS retrieval in the identity verifier;
+- unsigned authenticated contexts are rejected by the authenticated policy path;
 - raw prompts and raw tool arguments are not required in governance artifacts;
 - human approval remains explicit where policy requires it;
 - no OpenID Provider, SPIFFE-conformance, regulatory, or standards-certification claim.
 
-An `ALLOW` decision means only that the supplied policy permits the request after applicable identity checks. **v0.2 contains no executor.**
+An `ALLOW` decision means only that supplied policy permits the request after applicable identity checks. **v0.2 contains no executor.**
 
 ## Quick start
 
@@ -108,16 +115,17 @@ The demo evaluates a synthetic request and emits a constrained authorization dec
 
 ```text
 src/regagentops/
-  models.py                 immutable authorization artifacts and canonical digests
-  registry.py               institution-scoped agent and tool/action registries
-  policy.py                 deterministic fail-closed policy engine
-  identity_models.py        OIDC/workload/authenticated identity artifacts
-  oidc.py                   offline pinned-JWKS OIDC verification
-  registered_identity.py    owner/provider/subject registry binding
-  workload_identity.py      institution-owned signing interface and Ed25519 verification
-  identity_binding.py       human + workload + agent binding
-  authenticated_policy.py   identity-gated policy evaluation
-  cli.py                    offline synthetic authorization demo
+  models.py                              authorization artifacts and canonical digests
+  registry.py                            institution-scoped agent and tool/action registries
+  policy.py                              deterministic fail-closed policy engine
+  identity_models.py                     OIDC/workload/authenticated identity artifacts
+  oidc.py                                offline pinned-JWKS OIDC verification
+  registered_identity.py                 owner/provider/subject registry binding
+  workload_identity.py                   workload signing interface and Ed25519 verification
+  identity_binding.py                    human + workload + agent binding
+  authenticated_identity_signature.py    signed authenticated-context anti-forgery boundary
+  authenticated_policy.py                signed-identity-gated policy evaluation
+  cli.py                                 offline synthetic authorization demo
 
 schemas/
   agent-action-envelope.schema.json
@@ -129,6 +137,7 @@ schemas/
   workload-identity-trust-bundle.schema.json
   signed-workload-identity.schema.json
   authenticated-agent-identity.schema.json
+  signed-authenticated-agent-identity.schema.json
   authenticated-authorization-decision.schema.json
 
 tests/
@@ -146,7 +155,7 @@ docs/
 
 ## CI boundary
 
-GitHub Actions tests Python 3.11, 3.12, and 3.13, performs a clean-wheel smoke test, and statically rejects network/process capability imports in the authorization and identity core. A dedicated **Authenticated Identity Boundary** workflow also locks the v0.2 package/dependency surface, runs identity-specific regression tests, forbids network-capable `PyJWKClient`, and checks remote-key-header rejection guards.
+GitHub Actions tests Python 3.11, 3.12, and 3.13, performs a clean-wheel smoke test, and statically rejects network/process capability imports in the authorization and identity core. A dedicated **Authenticated Identity Boundary** workflow locks the v0.2 package/dependency surface, runs identity-specific cryptographic regression tests, forbids network-capable `PyJWKClient`, checks remote-key-header rejection guards, and regression-checks that authenticated policy requires signed context.
 
 This separation is intentional: future approval, MCP, and execution adapters must remain outside the pure authorization/identity boundary unless their release explicitly changes the trust model.
 
@@ -167,8 +176,6 @@ MCP treats tool capabilities as security-sensitive and emphasizes user control. 
 SPIFFE is referenced conceptually for workload identity and trust separation. RegAgentOps v0.2 does not implement SPIFFE Workload API, SVID issuance, or SPIFFE conformance.
 
 ## Roadmap
-
-The control sequence is intentionally staged:
 
 `v0.1 authorization → v0.2 authenticated identity → v0.3 signed human approval → v0.4 MCP governance → v0.5 signed execution receipts → v0.6 data/purpose governance → v0.7 assurance evidence → v0.8 tenant/crypto hardening → v0.9 production reference → v1.0 stable release`
 
