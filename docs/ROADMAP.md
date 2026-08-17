@@ -28,11 +28,13 @@ RegAgentOps evolves from an offline authorization core into a production-referen
 
 ## v0.3.0 — Human Approval and Delegated Authority
 
-- [ ] signed approval artifacts;
-- [ ] role and delegation boundaries;
-- [ ] separation of requester and approver where required;
-- [ ] approval expiry and replay prevention;
-- [ ] high-risk action escalation policy.
+- [x] domain-separated Ed25519 signed approval artifacts;
+- [x] scoped direct/delegated authority grants with non-expanding delegation validation;
+- [x] requester/approver separation for policy-required and high/critical-risk approval;
+- [x] bounded approval expiry and requirement-level one-time replay prevention;
+- [x] high-risk escalation and default dual approval for critical risk;
+- [x] valid denial terminally consumes a requirement and cannot be bypassed with an alternate package;
+- [x] strict approval JSON contracts and dedicated approval CI boundary.
 
 ## v0.4.0 — MCP Governance Adapter
 
