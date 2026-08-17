@@ -1,17 +1,18 @@
 # RegAgentOps Architecture
 
-## v0.2 boundary
+## v0.3 boundary
 
-RegAgentOps v0.2 is an **offline authenticated policy decision point (PDP)**. It verifies bounded human/workload identity inputs, binds them to a registered agent, signs that authenticated context with institution trust, evaluates a bounded authorization request, and emits evidence-oriented identity and authorization artifacts. It does not invoke the requested tool.
+RegAgentOps v0.3 is an **offline authenticated authorization and human-approval control plane**. It verifies bounded human/workload identity, evaluates institution policy, determines whether human approval is required by policy or risk escalation, verifies scoped signed approvals, and emits evidence-oriented authorization/approval artifacts.
+
+It still does **not** invoke the requested tool.
 
 ```text
-OIDC ID token + pinned JWKS          Institution workload signer
-              |                                 |
-              v                                 v
-    HumanIdentityAssertion          SignedWorkloadIdentity
-              \                                 /
-               \                               /
-                +---- AgentDescriptor --------+
+OIDC ID token + pinned JWKS       Institution workload signer
+              |                              |
+              v                              v
+    HumanIdentityAssertion       SignedWorkloadIdentity
+              \                              /
+               +---- AgentDescriptor -------+
                             |
                             v
                 AuthenticatedAgentIdentity
@@ -29,54 +30,77 @@ AgentActionEnvelope --------+-------- PolicyBundle
           AuthenticatedAuthorizationDecision
                             |
                             v
+                     ApprovalGate
+                /           |            \
+       authority grants   signatures   replay ledger
+                \           |            /
+                 +----------+-----------+
+                            |
+                            v
+                  ApprovalResolution
+                            |
+                            v
                  Caller / future PEP
 ```
 
-A future MCP policy-enforcement point (PEP), signed human-approval service, credential broker, and execution-receipt layer remain outside the v0.2 runtime boundary.
+## Authorization and identity
 
-## Authorization inputs
+The v0.1/v0.2 controls remain in force: request, tenant, agent, owner, model, tool/action, resource, data classification, purpose, environment, risk tier, input digest and timestamp are bound into `AgentActionEnvelope`; human OIDC identity and institution-controlled workload identity are verified offline; the resulting authenticated context is itself institution-signed before policy use.
 
-`AgentActionEnvelope` binds institution, agent identity, human owner, model provider/model identifier, tool/action, resource, data classification, business purpose, environment, risk tier, proposed-input SHA-256 digest, and request timestamp. Raw prompts, raw tool arguments, credentials, tokens, and secret values are not part of the authorization envelope.
+Policy precedence remains:
 
-## Identity inputs
+`DENY > REQUIRE_HUMAN_APPROVAL > ALLOW_WITH_CONSTRAINTS > ALLOW`
 
-Human identity is derived from an OIDC ID token verified offline against operator-supplied pinned JWKS. The local `HumanIdentityRegistry` binds an institution-local human owner to the expected OIDC provider and subject.
+No matching policy rule means `DENY`. Human approval cannot override a `DENY` or an unverified identity.
 
-Workload identity is represented by a short-lived statement signed by an institution-controlled Ed25519 signer. The statement binds the institution, agent, human owner, model identity, workload id, challenge digest, and validity interval.
+## Approval requirement
 
-`AuthenticatedAgentIdentity` binds digests of the registered agent, verified human assertion, and verified workload identity. Its validity ends at the earlier underlying identity expiry. Before policy use, the context itself is domain-separated and Ed25519-signed as `SignedAuthenticatedAgentIdentity`. This prevents a caller from fabricating the context dataclass and presenting it as verified identity evidence.
+`ApprovalGate.build_requirement()` creates an approval requirement only when approval is actually required:
 
-## Decision semantics
+- policy returns `REQUIRE_HUMAN_APPROVAL`; or
+- request risk is `high`; or
+- request risk is `critical`.
 
-Rules are explicit and institution-scoped. There are no wildcard identities in the current core. Multiple matches use conservative monotonic precedence:
+The reference escalation policy requires at least one approval for high risk and two distinct approvals for critical risk. Policy-required, high-risk and critical-risk flows require requester/approver separation.
 
-1. `DENY`
-2. `REQUIRE_HUMAN_APPROVAL`
-3. `ALLOW_WITH_CONSTRAINTS`
-4. `ALLOW`
+The requirement binds the exact request digest, authenticated authorization digest, signed identity-context digest, requester, tool/action, environment, risk tier, escalation-policy digest and expiry.
 
-No matching rule means `DENY`.
+## Delegated authority
 
-Authenticated evaluation adds a prior fail-closed gate. An unsigned context, invalid context signature, expired context, identity mismatch, disabled/missing agent registration, or registration-digest drift produces `DENY` before a policy allow can take effect.
+Approval authority is separate from signing-key trust.
 
-An `ALLOW` result is an authorization artifact only. v0.2 contains no executor and therefore cannot itself perform the authorized action.
+`ApprovalAuthorityGrant` defines what a principal may approve: tool ids, actions, environments, maximum risk tier and validity interval. Direct grants can permit delegation. Delegated grants bind their parent grant digest and are recursively validated.
 
-## Registry and trust binding
+A delegated grant cannot widen the parent tool, action or environment scope, cannot raise its maximum risk tier, cannot outlive its parent and cannot be issued by anyone other than the parent grant subject. Cycles fail closed.
 
-The request must match the registered agent's institution, human owner, model provider, and model identifier. The requested tool/action must also be registered for the same institution and data classification. Production use requires an explicit `production_registered` tool/action flag.
+## Signed approvals
 
-Human identity registration separately pins the institution-local owner to an OIDC provider and subject. Workload/context trust bundles are institution-scoped and key-id unique. Domain-separated signing documents prevent a workload statement signature from being reused as an authenticated-context signature.
+An `ApprovalStatement` binds the requirement, request, approver, authority-grant digest, vote, timestamps and rationale digest. The signed form uses Ed25519 with domain-separated purpose `regagentops.human-approval.v1`.
 
-## Deterministic evidence
+Approval trust keys are institution- and principal-scoped. Key status, key lifetime, statement lifetime, principal binding and signature are checked before authority evaluation.
 
-Artifacts use canonical JSON and SHA-256 digests. Authorization evidence records the request digest, policy-bundle digest, matched rule IDs, constraints, reason codes, and evaluation timestamp. Authenticated authorization binds the **signed** identity-context digest.
+## One-time resolution
 
-Raw OIDC bearer tokens and raw transaction nonces are not persisted in returned identity artifacts; only cryptographic digests are retained.
+`ApprovalReplayLedger` is a reference append-only SQLite redemption boundary. A valid denial or a sufficient set of valid approvals terminally consumes the **approval requirement digest** in a transaction. This prevents the same requirement from being resolved again using another approval package.
+
+An insufficient package does not consume the requirement and may be completed with additional distinct valid approvals before expiry.
+
+`ApprovalResolution.authorization_continuation_permitted=true` means only that the v0.3 approval gate has been satisfied. It is not proof of tool execution and it does not issue credentials.
+
+## Trust boundaries
+
+1. Caller → identity/PDP: caller input is untrusted until verified.
+2. Registry/policy/trust configuration → control plane: privileged configuration.
+3. Authenticated PDP → approval gate: v0.3 assumes the supplied authenticated authorization artifact is produced by the trusted local RegAgentOps PDP path; the approval gate binds it by digest but does not independently sign the PDP result.
+4. Approval signer → approval verifier: private-key custody remains outside RegAgentOps; only signed artifacts and public trust material cross the boundary.
+5. Approval gate → future PEP/executor: v0.3 emits continuation evidence only; execution is outside the milestone.
 
 ## Capability separation
 
-The authorization and identity modules are statically checked in CI to prevent network/process imports. OIDC verification does not use provider discovery, remote JWKS retrieval, or PyJWT `PyJWKClient`. Signing is exposed through provider protocols so production private-key custody can remain behind institution-owned HSM/KMS signing services.
+Authorization, identity and approval modules are statically checked in CI to reject network/process capability imports. OIDC remains offline and approval verification performs no external lookup. The replay ledger uses local SQLite only and exposes no destructive update/delete API.
+
+Future MCP connectivity, credential brokerage and execution receipts remain separate roadmap boundaries.
 
 ## Standards posture
 
-RegAgentOps is informed by NIST AI RMF risk-governance concepts, OpenID Connect/JWK/JWT security guidance, SPIFFE workload-identity concepts, and MCP trust/safety guidance. These references are design inputs, not protocol-conformance or certification claims.
+RegAgentOps uses NIST AI RMF, OpenID/JWT security guidance, workload-identity concepts and MCP trust/safety guidance as design inputs. These are not protocol-conformance or certification claims.

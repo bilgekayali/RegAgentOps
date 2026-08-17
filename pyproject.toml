@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "regagentops"
-version = "0.2.0"
+version = "0.3.0"
 description = "Evidence-backed authorization and governance control plane for AI agents in regulated enterprises"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -16,7 +16,9 @@ dependencies = [
 keywords = [
   "ai-agents",
   "authorization",
+  "delegated-authority",
   "governance",
+  "human-approval",
   "mcp",
   "oidc",
   "policy-engine",
