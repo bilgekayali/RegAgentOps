@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ContractTests(unittest.TestCase):
     def test_package_version(self):
-        self.assertEqual(regagentops.__version__, "0.2.0")
+        self.assertEqual(regagentops.__version__, "0.3.0")
 
     def test_json_schemas_are_parseable_and_version_pinned(self):
         expected = {
@@ -27,6 +27,13 @@ class ContractTests(unittest.TestCase):
             "authenticated-agent-identity.schema.json": "regagentops.authenticated-agent-identity.v1",
             "signed-authenticated-agent-identity.schema.json": "regagentops.signed-authenticated-agent-identity.v1",
             "authenticated-authorization-decision.schema.json": "regagentops.authenticated-authorization-decision.v1",
+            "approval-authority-grant.schema.json": "regagentops.approval-authority-grant.v1",
+            "approval-escalation-policy.schema.json": "regagentops.approval-escalation-policy.v1",
+            "approval-requirement.schema.json": "regagentops.approval-requirement.v1",
+            "approval-trust-bundle.schema.json": "regagentops.approval-trust-bundle.v1",
+            "signed-approval-statement.schema.json": "regagentops.signed-approval-statement.v1",
+            "signed-approval-package.schema.json": "regagentops.signed-approval-package.v1",
+            "approval-resolution.schema.json": "regagentops.approval-resolution.v1",
         }
         for filename, discriminator in expected.items():
             payload = json.loads((ROOT / "schemas" / filename).read_text(encoding="utf-8"))
