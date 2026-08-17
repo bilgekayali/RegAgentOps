@@ -26,22 +26,29 @@ jobs:
         run: python -m pip install -e .
       - name: Run tests
         run: python -m unittest discover -s tests -v
-      - name: Enforce offline authorization-core boundary
+      - name: Enforce offline authorization and identity boundary
         shell: bash
         run: |
           python - <<'PY'
           import ast
           from pathlib import Path
 
-          banned = {"asyncio", "http", "requests", "socket", "subprocess", "urllib"}
+          banned = {"asyncio", "ftplib", "http", "requests", "socket", "subprocess", "telnetlib", "urllib"}
           core_files = [
               Path("src/regagentops/models.py"),
               Path("src/regagentops/registry.py"),
               Path("src/regagentops/policy.py"),
               Path("src/regagentops/cli.py"),
+              Path("src/regagentops/identity_models.py"),
+              Path("src/regagentops/oidc.py"),
+              Path("src/regagentops/workload_identity.py"),
+              Path("src/regagentops/identity_binding.py"),
+              Path("src/regagentops/registered_identity.py"),
+              Path("src/regagentops/authenticated_policy.py"),
           ]
           for path in core_files:
-              tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+              source = path.read_text(encoding="utf-8")
+              tree = ast.parse(source, filename=str(path))
               for node in ast.walk(tree):
                   if isinstance(node, ast.Import):
                       imports = {alias.name.split(".")[0] for alias in node.names}
@@ -52,6 +59,9 @@ jobs:
                   blocked = imports & banned
                   if blocked:
                       raise SystemExit(f"{path}: forbidden capability import(s): {sorted(blocked)}")
+          oidc_source = Path("src/regagentops/oidc.py").read_text(encoding="utf-8")
+          if "PyJWKClient" in oidc_source:
+              raise SystemExit("OIDC verifier must not use network-capable PyJWKClient")
           PY
 
   package-smoke:
@@ -71,6 +81,14 @@ jobs:
           python -m venv /tmp/regagentops-smoke
           /tmp/regagentops-smoke/bin/python -m pip install dist/*.whl
           /tmp/regagentops-smoke/bin/regagentops --version
+          /tmp/regagentops-smoke/bin/python - <<'PY'
+          import regagentops
+          import regagentops.authenticated_policy
+          import regagentops.identity_binding
+          import regagentops.oidc
+          import regagentops.workload_identity
+          assert regagentops.__version__ == "0.2.0"
+          PY
           /tmp/regagentops-smoke/bin/regagentops demo-decision > /tmp/regagentops-decision.json
           /tmp/regagentops-smoke/bin/python - <<'PY'
           import json
