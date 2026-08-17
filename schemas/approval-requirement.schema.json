@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://regagentops.dev/schemas/approval-requirement.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requirement_id", "institution_id", "request_digest", "authenticated_authorization_digest", "identity_context_digest", "requester_id", "tool_id", "action", "environment", "risk_tier", "min_approvals", "requester_separation_required", "escalation_policy_digest", "issued_at", "expires_at", "schema_version"],
+  "properties": {
+    "requirement_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "institution_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "request_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "authenticated_authorization_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "identity_context_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "requester_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "tool_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "action": {"type": "string", "minLength": 1, "maxLength": 256},
+    "environment": {"enum": ["sandbox", "development", "test", "staging", "production"]},
+    "risk_tier": {"enum": ["low", "moderate", "high", "critical"]},
+    "min_approvals": {"type": "integer", "minimum": 1, "maximum": 5},
+    "requester_separation_required": {"type": "boolean"},
+    "escalation_policy_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "issued_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "schema_version": {"const": "regagentops.approval-requirement.v1"}
+  }
+}
