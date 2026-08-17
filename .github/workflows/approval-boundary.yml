@@ -1,0 +1,94 @@
+name: Human Approval Boundary
+
+on:
+  push:
+    branches:
+      - main
+      - "agent/**"
+    paths:
+      - "src/regagentops/approval_*.py"
+      - "tests/test_approvals.py"
+      - "schemas/approval-*.json"
+      - "schemas/signed-approval-*.json"
+      - "pyproject.toml"
+      - "README.md"
+      - "docs/APPROVALS.md"
+      - "docs/ARCHITECTURE.md"
+      - "docs/ROADMAP.md"
+      - "docs/THREAT_MODEL.md"
+      - ".github/workflows/approval-boundary.yml"
+  pull_request:
+    paths:
+      - "src/regagentops/approval_*.py"
+      - "tests/test_approvals.py"
+      - "schemas/approval-*.json"
+      - "schemas/signed-approval-*.json"
+      - "pyproject.toml"
+      - "README.md"
+      - "docs/APPROVALS.md"
+      - "docs/ARCHITECTURE.md"
+      - "docs/ROADMAP.md"
+      - "docs/THREAT_MODEL.md"
+      - ".github/workflows/approval-boundary.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  approval-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install package
+        run: python -m pip install -e .
+      - name: Run approval regression tests
+        run: python -m unittest tests.test_approvals -v
+      - name: Verify v0.3 approval contract
+        shell: bash
+        run: |
+          python - <<'PY'
+          import tomllib
+          payload = tomllib.load(open('pyproject.toml', 'rb'))
+          assert payload['project']['version'] == '0.3.0'
+          assert payload['project']['dependencies'] == ['PyJWT[crypto]>=2.13,<3']
+          PY
+      - name: Verify bounded approval capability surface
+        shell: bash
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          banned = {"asyncio", "ftplib", "http", "requests", "socket", "subprocess", "telnetlib", "urllib"}
+          paths = sorted(Path('src/regagentops').glob('approval_*.py'))
+          for path in paths:
+              source = path.read_text(encoding='utf-8')
+              tree = ast.parse(source, filename=str(path))
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.Import):
+                      roots = {alias.name.split('.')[0] for alias in node.names}
+                  elif isinstance(node, ast.ImportFrom) and node.module:
+                      roots = {node.module.split('.')[0]}
+                  else:
+                      continue
+                  blocked = roots & banned
+                  if blocked:
+                      raise SystemExit(f'{path}: forbidden capability import(s): {sorted(blocked)}')
+
+          signature = Path('src/regagentops/approval_signature.py').read_text(encoding='utf-8')
+          if 'regagentops.human-approval.v1' not in signature or 'Ed25519' not in signature:
+              raise SystemExit('approval signature must remain domain-separated and Ed25519-backed')
+
+          replay = Path('src/regagentops/approval_replay.py').read_text(encoding='utf-8').upper()
+          if 'UPDATE APPROVAL_REDEMPTIONS' in replay or 'DELETE FROM APPROVAL_REDEMPTIONS' in replay:
+              raise SystemExit('approval replay ledger must remain append-only')
+          if 'REQUIREMENT_DIGEST TEXT PRIMARY KEY' not in replay:
+              raise SystemExit('approval replay ledger must remain requirement-keyed')
+
+          engine = Path('src/regagentops/approval_engine.py').read_text(encoding='utf-8')
+          if 'DENY decisions cannot be overridden by human approval' not in engine:
+              raise SystemExit('approval gate must not override policy DENY')
+          PY
