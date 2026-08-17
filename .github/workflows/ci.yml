@@ -44,6 +44,7 @@ jobs:
               Path("src/regagentops/workload_identity.py"),
               Path("src/regagentops/identity_binding.py"),
               Path("src/regagentops/registered_identity.py"),
+              Path("src/regagentops/authenticated_identity_signature.py"),
               Path("src/regagentops/authenticated_policy.py"),
           ]
           for path in core_files:
@@ -83,6 +84,7 @@ jobs:
           /tmp/regagentops-smoke/bin/regagentops --version
           /tmp/regagentops-smoke/bin/python - <<'PY'
           import regagentops
+          import regagentops.authenticated_identity_signature
           import regagentops.authenticated_policy
           import regagentops.identity_binding
           import regagentops.oidc
