@@ -25,6 +25,7 @@ class ContractTests(unittest.TestCase):
             "workload-identity-trust-bundle.schema.json": "regagentops.workload-identity-trust-bundle.v1",
             "signed-workload-identity.schema.json": "regagentops.signed-workload-identity.v1",
             "authenticated-agent-identity.schema.json": "regagentops.authenticated-agent-identity.v1",
+            "signed-authenticated-agent-identity.schema.json": "regagentops.signed-authenticated-agent-identity.v1",
             "authenticated-authorization-decision.schema.json": "regagentops.authenticated-authorization-decision.v1",
         }
         for filename, discriminator in expected.items():
