@@ -16,11 +16,14 @@ RegAgentOps evolves from an offline authorization core into a production-referen
 
 ## v0.2.0 — Authenticated Agent Identity
 
-- [ ] OIDC/JWKS verification boundary;
-- [ ] institution-owned workload identity;
-- [ ] short-lived identity attestations;
-- [ ] exact human-owner/agent/workload binding;
-- [ ] key lifecycle and offline trust-bundle verification.
+- [x] offline OIDC/JWKS verification with pinned issuer/client/algorithm policy;
+- [x] institution-owned workload identity signing boundary;
+- [x] short-lived signed workload identity attestations;
+- [x] exact human-owner/agent/model/workload binding;
+- [x] key lifecycle and offline trust-bundle verification;
+- [x] registered owner→provider→OIDC subject binding;
+- [x] authenticated policy evaluation with expiry and registration-drift rejection;
+- [x] strict identity JSON contracts and dedicated identity CI boundary.
 
 ## v0.3.0 — Human Approval and Delegated Authority
 
