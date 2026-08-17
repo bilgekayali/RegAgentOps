@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "agent/**"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install package
+        run: python -m pip install -e .
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+      - name: Enforce offline authorization-core boundary
+        shell: bash
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          banned = {"asyncio", "http", "requests", "socket", "subprocess", "urllib"}
+          core_files = [
+              Path("src/regagentops/models.py"),
+              Path("src/regagentops/registry.py"),
+              Path("src/regagentops/policy.py"),
+              Path("src/regagentops/cli.py"),
+          ]
+          for path in core_files:
+              tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.Import):
+                      imports = {alias.name.split(".")[0] for alias in node.names}
+                  elif isinstance(node, ast.ImportFrom) and node.module:
+                      imports = {node.module.split(".")[0]}
+                  else:
+                      continue
+                  blocked = imports & banned
+                  if blocked:
+                      raise SystemExit(f"{path}: forbidden capability import(s): {sorted(blocked)}")
+          PY
+
+  package-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build package
+        run: |
+          python -m pip install build
+          python -m build
+      - name: Smoke-test wheel
+        shell: bash
+        run: |
+          python -m venv /tmp/regagentops-smoke
+          /tmp/regagentops-smoke/bin/python -m pip install dist/*.whl
+          /tmp/regagentops-smoke/bin/regagentops --version
+          /tmp/regagentops-smoke/bin/regagentops demo-decision > /tmp/regagentops-decision.json
+          /tmp/regagentops-smoke/bin/python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path('/tmp/regagentops-decision.json').read_text())
+          assert payload['execution_performed'] is False
+          assert payload['decision']['decision'] == 'ALLOW_WITH_CONSTRAINTS'
+          PY
