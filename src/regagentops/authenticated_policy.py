@@ -4,7 +4,12 @@ from dataclasses import dataclass
 from datetime import datetime
 import re
 
-from .identity_models import AuthenticatedAgentIdentity
+from .authenticated_identity_signature import (
+    AuthenticatedIdentitySignatureError,
+    SignedAuthenticatedAgentIdentity,
+    verify_signed_authenticated_agent_identity,
+)
+from .identity_models import AuthenticatedAgentIdentity, WorkloadIdentityTrustBundle
 from .models import AgentActionEnvelope, AuthorizationDecision, Decision, digest_artifact
 from .policy import PolicyBundle, PolicyEngine
 from .registry import AgentRegistry, ToolRegistry
@@ -30,6 +35,12 @@ class AuthenticatedAuthorizationDecision:
             raise ValueError("nested authorization must bind the same request digest")
         if self.authorization.evaluated_at != self.evaluated_at:
             raise ValueError("nested authorization must use the same evaluation time")
+        if not self.identity_verified and (
+            self.authorization.decision is not Decision.DENY
+            or self.authorization.human_approval_required
+            or self.authorization.policy_permits_execution
+        ):
+            raise ValueError("unverified identity must produce a non-executable DENY decision")
 
     @property
     def decision(self) -> Decision:
@@ -49,32 +60,73 @@ class AuthenticatedPolicyEngine:
         self,
         request: AgentActionEnvelope,
         policy: PolicyBundle,
-        identity: AuthenticatedAgentIdentity,
+        identity: SignedAuthenticatedAgentIdentity,
         *,
+        identity_trust_bundle: WorkloadIdentityTrustBundle,
         evaluated_at: str,
     ) -> AuthenticatedAuthorizationDecision:
-        reason = self._identity_failure_reason(request, identity, evaluated_at)
+        try:
+            verified_identity = verify_signed_authenticated_agent_identity(
+                identity,
+                trust_bundle=identity_trust_bundle,
+                now=evaluated_at,
+            )
+        except AuthenticatedIdentitySignatureError:
+            return self._identity_deny(
+                request,
+                policy,
+                identity.artifact_digest,
+                evaluated_at,
+                "authenticated_identity_context_untrusted_or_expired",
+            )
+
+        reason = self._identity_failure_reason(request, verified_identity, evaluated_at)
         if reason is None:
             base = self._base.evaluate(request, policy, evaluated_at=evaluated_at)
             verified = True
         else:
-            base = AuthorizationDecision(
-                request_digest=request.artifact_digest,
-                policy_bundle_digest=policy.artifact_digest,
-                decision=Decision.DENY,
-                matched_rule_ids=(),
-                constraints=(),
-                reason_codes=(reason,),
-                human_approval_required=False,
-                policy_permits_execution=False,
-                evaluated_at=evaluated_at,
-            )
+            base = self._denied_authorization(request, policy, evaluated_at, reason)
             verified = False
         return AuthenticatedAuthorizationDecision(
             request_digest=request.artifact_digest,
             identity_context_digest=identity.artifact_digest,
             authorization=base,
             identity_verified=verified,
+            evaluated_at=evaluated_at,
+        )
+
+    def _identity_deny(
+        self,
+        request: AgentActionEnvelope,
+        policy: PolicyBundle,
+        identity_context_digest: str,
+        evaluated_at: str,
+        reason: str,
+    ) -> AuthenticatedAuthorizationDecision:
+        return AuthenticatedAuthorizationDecision(
+            request_digest=request.artifact_digest,
+            identity_context_digest=identity_context_digest,
+            authorization=self._denied_authorization(request, policy, evaluated_at, reason),
+            identity_verified=False,
+            evaluated_at=evaluated_at,
+        )
+
+    @staticmethod
+    def _denied_authorization(
+        request: AgentActionEnvelope,
+        policy: PolicyBundle,
+        evaluated_at: str,
+        reason: str,
+    ) -> AuthorizationDecision:
+        return AuthorizationDecision(
+            request_digest=request.artifact_digest,
+            policy_bundle_digest=policy.artifact_digest,
+            decision=Decision.DENY,
+            matched_rule_ids=(),
+            constraints=(),
+            reason_codes=(reason,),
+            human_approval_required=False,
+            policy_permits_execution=False,
             evaluated_at=evaluated_at,
         )
 
