@@ -30,6 +30,10 @@ HumanIdentityAssertion + SignedWorkloadIdentity + AgentDescriptor
        v
 AuthenticatedAgentIdentity
        |
+       | institution Ed25519 context signature
+       v
+SignedAuthenticatedAgentIdentity
+       |
        v
 AuthenticatedPolicyEngine
        |
@@ -60,38 +64,30 @@ The returned `HumanIdentityAssertion` stores SHA-256 digests of the token, claim
 
 ## Workload identity
 
-A `WorkloadIdentityStatement` binds:
+A `WorkloadIdentityStatement` binds institution, agent id, human owner, model provider/model id, workload id, challenge digest, and issuance/expiry timestamps.
 
-- institution;
-- agent id;
-- human owner;
-- model provider and model id;
-- workload id;
-- challenge digest;
-- issuance and expiry timestamps.
-
-The lifetime is capped at 15 minutes. v0.2 signs workload statements with Ed25519 through the provider-neutral `WorkloadIdentitySigner` protocol. RegAgentOps therefore does not need to own or persist the institution private key; production deployments can implement the signer with an HSM, KMS-backed signing service, or another institution-controlled signing boundary.
+The lifetime is capped at 15 minutes. v0.2 signs workload statements with Ed25519 through the provider-neutral `WorkloadIdentitySigner` protocol. RegAgentOps therefore does not need to own or persist the institution private key; deployments can implement the signer with an HSM, KMS-backed signing service, or another institution-controlled signing boundary.
 
 `WorkloadIdentityTrustBundle` contains public trust keys, validity intervals, and lifecycle status. Current authentication accepts only the exact active key referenced by the signed identity and verifies the signature entirely offline.
 
-## Agent binding
+## Agent and context binding
 
 `establish_authenticated_agent_identity()` succeeds only when the human assertion, signed workload identity, and registered `AgentDescriptor` agree on institution, agent, human owner, model provider, and model id.
 
-The resulting `AuthenticatedAgentIdentity` binds digests of all three trust inputs. Its validity ends at the earlier of the human-token expiry and workload-identity expiry.
+The resulting `AuthenticatedAgentIdentity` binds digests of all three trust inputs and expires at the earlier human/workload identity expiry. **That unsigned dataclass is not sufficient for policy evaluation.** Before use it must be wrapped as `SignedAuthenticatedAgentIdentity` using an institution-controlled Ed25519 signer. The signing document is domain-separated and binds the institution, agent, owner, provider, workload id, complete identity digest, key id, and algorithm.
 
-`AuthenticatedPolicyEngine` rechecks that:
+`AuthenticatedPolicyEngine` verifies the signed context against an institution trust bundle before evaluating policy. It then rechecks that:
 
 - the identity context belongs to the same institution, agent, and human owner as the request;
 - the context is currently valid;
 - the registered agent still exists and is enabled;
 - the agent registration digest has not changed since the context was established.
 
-Failure of any identity check produces `DENY` before a policy allow can take effect.
+An unsigned context, invalid/tampered context signature, expired context, or any other identity failure produces a non-executable `DENY` before a policy allow can take effect.
 
 ## Failure semantics
 
-Identity verification is fail-closed. Network failure is not a concept inside the verifier because the verifier has no network capability. Missing trust material, ambiguous key ids, invalid signatures, expired identities, registration drift, subject mismatch, provider mismatch, or tenant mismatch all prevent authenticated authorization.
+Identity verification is fail-closed. Network failure is not a concept inside the verifier because the verifier has no network capability. Missing trust material, ambiguous key ids, invalid signatures, unsigned/fabricated contexts, expired identities, registration drift, subject mismatch, provider mismatch, or tenant mismatch all prevent authenticated authorization.
 
 ## Non-claims
 
