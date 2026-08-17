@@ -22,6 +22,7 @@ RegAgentOps evolves from an offline authorization core into a production-referen
 - [x] exact human-owner/agent/model/workload binding;
 - [x] key lifecycle and offline trust-bundle verification;
 - [x] registered owner→provider→OIDC subject binding;
+- [x] institution-signed authenticated context with unsigned/tampered-context rejection;
 - [x] authenticated policy evaluation with expiry and registration-drift rejection;
 - [x] strict identity JSON contracts and dedicated identity CI boundary.
 
