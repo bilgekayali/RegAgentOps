@@ -14,7 +14,7 @@ The project is designed for regulated and high-assurance environments such as fi
 
 Current version: **v0.1.0 — Governed Agent Authorization Core**.
 
-## Why this exists
+## Purpose
 
 Agentic systems can request tools that read enterprise data, call APIs, modify records, or trigger business processes. RegAgentOps places a deterministic governance decision point between an agent request and any future enforcement/execution layer.
 
