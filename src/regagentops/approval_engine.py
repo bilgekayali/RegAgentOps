@@ -32,6 +32,8 @@ class SignedApprovalPackage:
     schema_version: str = "regagentops.signed-approval-package.v1"
 
     def __post_init__(self) -> None:
+        if len(self.approvals) > 5:
+            raise ValueError("approval package cannot contain more than five approvals")
         approval_ids = [item.statement.approval_id for item in self.approvals]
         if len(approval_ids) != len(set(approval_ids)):
             raise ValueError("approval package contains duplicate approval ids")
