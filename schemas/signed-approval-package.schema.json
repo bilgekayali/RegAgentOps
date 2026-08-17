@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://regagentops.dev/schemas/signed-approval-package.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requirement", "approvals", "schema_version"],
+  "properties": {
+    "requirement": {"type": "object"},
+    "approvals": {"type": "array", "maxItems": 5, "items": {"type": "object"}},
+    "schema_version": {"const": "regagentops.signed-approval-package.v1"}
+  }
+}
