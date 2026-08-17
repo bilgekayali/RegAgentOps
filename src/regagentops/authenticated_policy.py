@@ -60,11 +60,21 @@ class AuthenticatedPolicyEngine:
         self,
         request: AgentActionEnvelope,
         policy: PolicyBundle,
-        identity: SignedAuthenticatedAgentIdentity,
+        identity: SignedAuthenticatedAgentIdentity | AuthenticatedAgentIdentity,
         *,
         identity_trust_bundle: WorkloadIdentityTrustBundle,
         evaluated_at: str,
     ) -> AuthenticatedAuthorizationDecision:
+        if not isinstance(identity, SignedAuthenticatedAgentIdentity):
+            identity_digest = identity.artifact_digest if isinstance(identity, AuthenticatedAgentIdentity) else "0" * 64
+            return self._identity_deny(
+                request,
+                policy,
+                identity_digest,
+                evaluated_at,
+                "authenticated_identity_context_unsigned",
+            )
+
         try:
             verified_identity = verify_signed_authenticated_agent_identity(
                 identity,
