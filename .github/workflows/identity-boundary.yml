@@ -1,0 +1,109 @@
+name: Authenticated Identity Boundary
+
+on:
+  push:
+    branches:
+      - main
+      - "agent/**"
+    paths:
+      - "src/regagentops/identity_*.py"
+      - "src/regagentops/oidc.py"
+      - "src/regagentops/registered_identity.py"
+      - "src/regagentops/workload_identity.py"
+      - "src/regagentops/authenticated_identity_signature.py"
+      - "src/regagentops/authenticated_policy.py"
+      - "tests/test_identity.py"
+      - "tests/test_registered_identity.py"
+      - "schemas/*identity*.json"
+      - "schemas/authenticated-authorization-decision.schema.json"
+      - "pyproject.toml"
+      - "README.md"
+      - "docs/ARCHITECTURE.md"
+      - "docs/IDENTITY.md"
+      - "docs/ROADMAP.md"
+      - "docs/THREAT_MODEL.md"
+      - ".github/workflows/identity-boundary.yml"
+  pull_request:
+    paths:
+      - "src/regagentops/identity_*.py"
+      - "src/regagentops/oidc.py"
+      - "src/regagentops/registered_identity.py"
+      - "src/regagentops/workload_identity.py"
+      - "src/regagentops/authenticated_identity_signature.py"
+      - "src/regagentops/authenticated_policy.py"
+      - "tests/test_identity.py"
+      - "tests/test_registered_identity.py"
+      - "schemas/*identity*.json"
+      - "schemas/authenticated-authorization-decision.schema.json"
+      - "pyproject.toml"
+      - "README.md"
+      - "docs/ARCHITECTURE.md"
+      - "docs/IDENTITY.md"
+      - "docs/ROADMAP.md"
+      - "docs/THREAT_MODEL.md"
+      - ".github/workflows/identity-boundary.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  identity-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install package
+        run: python -m pip install -e .
+      - name: Run identity regression tests
+        run: python -m unittest tests.test_identity tests.test_registered_identity -v
+      - name: Verify version and dependency boundary
+        shell: bash
+        run: |
+          python - <<'PY'
+          import tomllib
+          payload = tomllib.load(open('pyproject.toml', 'rb'))
+          assert payload['project']['version'] == '0.2.0'
+          assert payload['project']['dependencies'] == ['PyJWT[crypto]>=2.13,<3']
+          PY
+      - name: Verify offline pinned-trust implementation
+        shell: bash
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          banned = {"asyncio", "ftplib", "http", "requests", "socket", "subprocess", "telnetlib", "urllib"}
+          paths = [
+              Path('src/regagentops/identity_models.py'),
+              Path('src/regagentops/oidc.py'),
+              Path('src/regagentops/registered_identity.py'),
+              Path('src/regagentops/workload_identity.py'),
+              Path('src/regagentops/identity_binding.py'),
+              Path('src/regagentops/authenticated_identity_signature.py'),
+              Path('src/regagentops/authenticated_policy.py'),
+          ]
+          for path in paths:
+              source = path.read_text(encoding='utf-8')
+              if 'PyJWKClient' in source:
+                  raise SystemExit(f'{path}: network JWKS client is forbidden')
+              tree = ast.parse(source, filename=str(path))
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.Import):
+                      roots = {alias.name.split('.')[0] for alias in node.names}
+                  elif isinstance(node, ast.ImportFrom) and node.module:
+                      roots = {node.module.split('.')[0]}
+                  else:
+                      continue
+                  blocked = roots & banned
+                  if blocked:
+                      raise SystemExit(f'{path}: forbidden capability import(s): {sorted(blocked)}')
+          oidc = Path('src/regagentops/oidc.py').read_text(encoding='utf-8')
+          for marker in ('jku', 'x5u', 'crit'):
+              if marker not in oidc:
+                  raise SystemExit(f'OIDC remote-key header guard missing: {marker}')
+          policy = Path('src/regagentops/authenticated_policy.py').read_text(encoding='utf-8')
+          if 'SignedAuthenticatedAgentIdentity' not in policy or 'authenticated_identity_context_unsigned' not in policy:
+              raise SystemExit('authenticated policy must require signed context and reject unsigned context')
+          PY

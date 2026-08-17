@@ -4,19 +4,24 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "regagentops"
-version = "0.1.0"
+version = "0.2.0"
 description = "Evidence-backed authorization and governance control plane for AI agents in regulated enterprises"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Bilge Kayalı" }]
 license = { text = "Apache-2.0" }
+dependencies = [
+  "PyJWT[crypto]>=2.13,<3",
+]
 keywords = [
   "ai-agents",
   "authorization",
   "governance",
   "mcp",
+  "oidc",
   "policy-engine",
   "regulated-enterprise",
+  "workload-identity",
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",
