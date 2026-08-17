@@ -1,117 +1,117 @@
-# Threat Model — v0.2
+# Threat Model — v0.3
 
 ## Protected assets
 
 - authorization policy integrity;
-- institution, human-owner, agent, model, and workload identity bindings;
+- institution, human-owner, agent, model and workload identity bindings;
 - OIDC verifier configuration and pinned JWKS integrity;
-- institution workload/context trust-bundle integrity;
+- institution identity/context trust material;
+- approval authority/delegation integrity;
+- approver signing-key trust and approval-signature integrity;
+- approval requirement and replay-ledger integrity;
 - tool/action registry integrity;
-- authorization and authenticated-identity evidence integrity;
-- raw bearer-token and nonce confidentiality;
-- separation between identity/decision and execution capabilities.
+- authorization, identity and approval evidence integrity;
+- separation between governance decisions and execution capabilities.
 
 ## Trust boundaries
 
-1. **Caller → identity/PDP**: the caller supplies the action request, raw OIDC token, transaction nonce, and externally governed trust material; all are untrusted until verified.
-2. **Human identity registry → OIDC verifier**: owner→provider→subject mappings are privileged administrative configuration.
-3. **Pinned JWKS/config → OIDC verifier**: trust material must come from a separately governed configuration path; the verifier performs no online discovery.
-4. **Institution workload/context signer → verifier**: private-key custody remains outside the verifier; only signed statements/contexts and public trust bundles cross the boundary.
-5. **Registry/policy configuration → PDP**: agent/tool/policy configuration is security-sensitive administrative input.
-6. **PDP → future enforcement point**: v0.2 produces decisions but does not enforce or execute actions.
+1. **Caller → identity/PDP**: action, identity and request inputs are untrusted until verified.
+2. **Human identity registry / pinned JWKS → OIDC verifier**: privileged trust configuration; no online discovery.
+3. **Institution workload/context signer → verifier**: private keys remain outside the verifier.
+4. **Registry/policy configuration → PDP**: privileged administrative input.
+5. **Trusted local PDP → approval gate**: v0.3 binds the authenticated authorization artifact by digest but does not independently sign the PDP result.
+6. **Approval authority bundle → approval gate**: privileged role/delegation configuration.
+7. **Human approval signer → approval verifier**: private approval keys remain outside RegAgentOps; signed statements and public trust material cross the boundary.
+8. **Approval replay ledger → future PEP**: terminal approval resolution is one-time governance evidence, not execution proof.
 
-## Primary threats and v0.2 controls
+## Primary threats and controls
 
-### Human identity substitution
+### Identity substitution, JWT key confusion and stale authentication
 
-Threat: a caller presents a valid token for a different subject or provider and maps it to a privileged local owner.
+Controls from v0.2 remain: registered owner→provider→subject binding, pinned issuer/client/audience/algorithm policy, nonce and time checks, rejection of remote key-selection headers, short-lived institution workload identity, institution-signed authenticated context and fail-closed registration-drift checks.
 
-Controls: institution-scoped human identity registration; exact provider and subject binding; issuer/client/audience checks; exact transaction nonce; authenticated context must match the registered agent owner.
+### Human approval overriding a policy denial
 
-### JWT algorithm or key confusion
+Threat: an operator uses an approval artifact as a break-glass bypass around policy or identity failure.
 
-Threat: a token selects an unsafe algorithm or redirects verification toward attacker-controlled key material.
+Control: `ApprovalGate.build_requirement()` refuses base `DENY`; `resolve()` also rejects unverified identity or `DENY`. Approval can satisfy a continuation condition only for requests not already denied.
 
-Controls: explicit asymmetric algorithm allowlist; one exact `kid`; JWK algorithm/use/key-ops compatibility; rejection of `jku`, `x5u`, and `crit`; no `PyJWKClient` or online key retrieval in the verifier.
+### Requester self-approval
 
-### Token replay or stale authentication
+Threat: the agent owner approves their own high-risk or policy-gated request.
 
-Threat: an old but once-valid identity token is replayed into a new authorization transaction.
+Control: policy-required, high-risk and critical-risk requirements set requester/approver separation. Authority verification rejects the request owner as approver in those flows.
 
-Controls: exact transaction nonce; `iat`/`exp`/optional `nbf` checks; bounded maximum token age; optional ACR policy; authenticated context inherits the earliest identity expiry.
+### Delegation privilege expansion
 
-### Workload impersonation
+Threat: a delegated approver creates a child grant with broader authority than the parent.
 
-Threat: a process claims to be an authorized agent/model workload.
+Controls: child tool/action/environment sets must be subsets of the parent; maximum risk tier cannot increase; child validity cannot extend beyond the parent; issuer must equal parent subject; parent must explicitly permit delegation; cycles are rejected.
 
-Controls: short-lived workload statement; institution/agent/owner/model/workload/challenge binding; Ed25519 signature; institution-scoped trust bundle; exact key-id selection; active-key and validity-window checks.
+### Approval key substitution
 
-### Fabricated authenticated context
+Threat: a valid signature from a different principal or key is presented as the required approver.
 
-Threat: a caller skips OIDC/workload verification and directly constructs an `AuthenticatedAgentIdentity` object with values that appear valid.
+Controls: approval trust keys are bound to institution + principal + key id; statement approver must match signer principal; active status, validity interval, Ed25519 algorithm and signature are checked before authority evaluation.
 
-Controls: the raw context is not accepted as policy authority. It must be domain-separated and Ed25519-signed as `SignedAuthenticatedAgentIdentity`; the policy engine verifies that signature against institution trust before using the context. Unsigned, tampered, untrusted, or expired contexts produce non-executable `DENY`.
+### Approval artifact tampering
 
-### Registration drift after authentication
+Threat: request, requirement, authority grant, vote, expiry or rationale binding changes after approval.
 
-Threat: an authenticated context remains usable after the agent's registered owner/model configuration changes.
+Control: `SignedApprovalStatement` signs a domain-separated document that binds the statement digest plus exact requirement/request/grant/principal identifiers. Tampering invalidates the signature or digest.
 
-Control: the context binds the `AgentDescriptor` digest and `AuthenticatedPolicyEngine` rechecks it before policy evaluation.
+### Insufficient or duplicate approvals counted as quorum
 
-### Cross-tenant identity replay
+Threat: one principal is counted multiple times or a critical request passes with too few approvals.
 
-Threat: human/workload/context evidence from one institution is replayed for another.
+Controls: package approval IDs and approver principals are unique; high/critical escalation enforces configured minimums; default critical minimum is two distinct approvers.
 
-Control: institution id is independently bound into provider config, human assertion, workload statement, trust keys/bundle, registered agent, signed context, request, and authorization evidence. Mismatch fails closed.
+### Approval replay with an alternative package
 
-### Unregistered tool/action use
+Threat: the same requirement is resolved once, then replayed with another combination of approvals.
 
-Threat: an authenticated agent requests an action that was never governed.
+Control: reference replay storage uses the approval **requirement digest** as its primary one-time key. A valid denial or sufficient approval set transactionally consumes the requirement. Later packages for that requirement fail closed.
 
-Control: tool/action registry lookup remains mandatory; missing/disabled entries fail closed.
+### Denial omission / bypass
 
-### Data-classification escalation
+Threat: after a valid denial is presented and resolved, another package omits the denial and seeks approval.
 
-Threat: a tool registered for lower-sensitivity data is used against more sensitive data.
+Control: a valid denial terminally consumes the requirement; an alternative package cannot redeem it afterward. A retry requires a new governed requirement.
 
-Control: requested classification must be explicitly present in the tool/action registration and matching policy rule.
+### Approval expiry abuse
 
-### Policy ambiguity or permissive fallback
+Threat: stale approval or stale authority remains usable.
 
-Threat: missing or overlapping rules accidentally grant access.
+Controls: approval statement lifetime is capped at 15 minutes; requirement lifetime is bounded; authority grants and trust keys have explicit validity windows; every resolution rechecks current time.
 
-Control: no-match is `DENY`; multiple matches use conservative precedence (`DENY` > approval > constrained allow > allow). Identity verification is evaluated before a policy allow can take effect.
+### Capability creep
 
-### Bearer material copied into governance evidence
+Threat: approval code quietly gains network/process or execution capability.
 
-Threat: raw OIDC tokens/nonces become retained in audit artifacts.
-
-Control: returned identity artifacts retain SHA-256 bindings rather than the raw bearer token or raw nonce.
-
-### Capability creep inside identity or PDP code
-
-Threat: later changes quietly add network/process execution or online JWKS retrieval.
-
-Control: generic CI and the dedicated Authenticated Identity Boundary statically reject network/process imports; `PyJWKClient` is explicitly forbidden and signed-context enforcement is regression checked.
+Controls: generic CI and the dedicated Human Approval Boundary reject network/process imports in approval modules. The replay ledger has no destructive update/delete API and the dedicated workflow checks the append-only SQL surface.
 
 ## Residual risks
 
-v0.2 assumes the separately governed JWKS/config path and trust-bundle distribution path are protected. It also assumes institution signing providers authenticate/attest the workload and context-establishment service correctly before signing. RegAgentOps verifies resulting evidence but does not implement host-level workload attestation or HSM policy enforcement in v0.2.
+v0.3 assumes the `AuthenticatedAuthorizationDecision` supplied to the approval gate came from the trusted local RegAgentOps PDP path. The gate binds its digest but does not independently sign PDP decisions in this milestone.
+
+Authority bundles and approval trust bundles are privileged configuration and are not yet protected by signed configuration change control or tenant-isolated durable storage. Those are later roadmap boundaries.
+
+The SQLite replay ledger is application-level local state. It is not distributed consensus, physical WORM storage or external audit anchoring.
+
+v0.3 also does not prove that a future tool execution corresponds to an approved request. Exact authorization-to-execution binding is reserved for the signed execution receipt milestone.
 
 ## Explicit non-claims
 
-v0.2 does not provide or claim:
+v0.3 does not provide or claim:
 
 - OpenID Provider or OAuth authorization-server functionality;
 - SPIFFE/SPIRE or SVID protocol conformance;
 - online OIDC discovery or remote JWKS retrieval;
-- runtime sandboxing;
+- generic BPM/workflow approval functionality;
 - production credential brokerage;
-- MCP server authentication or execution;
-- tamper-proof external audit storage;
-- signed human approvals;
+- MCP execution;
 - production tool execution;
-- prompt-injection detection;
+- runtime sandboxing;
+- external immutable audit storage;
+- independent timestamp authority;
 - regulatory or standards certification.
-
-These remain later roadmap boundaries and must not be inferred from an authenticated authorization decision.
