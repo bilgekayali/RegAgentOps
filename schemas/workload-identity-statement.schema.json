@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://regagentops.dev/schemas/workload-identity-statement.schema.json",
+  "title": "RegAgentOps Workload Identity Statement",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["institution_id", "agent_id", "human_owner_id", "model_provider", "model_id", "workload_id", "challenge_digest", "issued_at", "expires_at", "schema_version"],
+  "properties": {
+    "institution_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "agent_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "human_owner_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "model_provider": {"type": "string", "minLength": 1, "maxLength": 256},
+    "model_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "workload_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "challenge_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "issued_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "schema_version": {"const": "regagentops.workload-identity-statement.v1"}
+  }
+}
