@@ -18,7 +18,10 @@ on:
       - "schemas/authenticated-authorization-decision.schema.json"
       - "pyproject.toml"
       - "README.md"
+      - "docs/ARCHITECTURE.md"
       - "docs/IDENTITY.md"
+      - "docs/ROADMAP.md"
+      - "docs/THREAT_MODEL.md"
       - ".github/workflows/identity-boundary.yml"
   pull_request:
     paths:
@@ -34,7 +37,10 @@ on:
       - "schemas/authenticated-authorization-decision.schema.json"
       - "pyproject.toml"
       - "README.md"
+      - "docs/ARCHITECTURE.md"
       - "docs/IDENTITY.md"
+      - "docs/ROADMAP.md"
+      - "docs/THREAT_MODEL.md"
       - ".github/workflows/identity-boundary.yml"
 
 permissions:
