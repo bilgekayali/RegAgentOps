@@ -8,98 +8,110 @@ RegAgentOps is an open-source reference architecture for deciding, constraining,
 
 RegAgentOps answers a narrow question:
 
-> Under which identity, purpose, policy, data, tool, and human-authority conditions may an AI agent perform a specific enterprise action, and how can that decision be evidenced later?
+> Under which identity, purpose, policy, data, tool, delegated-authority, and human-approval conditions may an AI agent continue toward a specific enterprise action, and how can that decision be evidenced later?
 
-The project is designed for regulated and high-assurance environments such as financial institutions. It is **not** an autonomous agent framework, credential broker, generic MCP proxy, identity provider, or compliance-certification product.
+The project is designed for regulated and high-assurance environments such as financial institutions. It is **not** an autonomous agent framework, credential broker, generic MCP proxy, identity provider, workflow/BPM system, or compliance-certification product.
 
-Current version: **v0.2.0 — Authenticated Agent Identity**.
+Current version: **v0.3.0 — Human Approval and Delegated Authority**.
 
 ## Purpose
 
-Agentic systems can request tools that read enterprise data, call APIs, modify records, or trigger business processes. RegAgentOps places deterministic governance and identity verification before any future enforcement/execution layer.
+Agentic systems can request tools that read enterprise data, call APIs, modify records, or trigger business processes. RegAgentOps places deterministic identity, policy, delegated-authority and human-approval controls before any future enforcement/execution layer.
 
-The v0.2 core remains deliberately offline. It evaluates authorization and identity artifacts; it does not discover identity-provider metadata, fetch remote JWKS, connect to MCP servers, hold production credentials, or execute requested actions.
+The v0.3 core remains deliberately bounded and offline. It does not discover identity-provider metadata, fetch remote JWKS, connect to MCP servers, issue production credentials, or execute requested actions.
 
 ## Control model
 
 ```text
-Human owner OIDC token          Institution workload signer
-        |                                |
-        | pinned offline JWKS verify     | signed short-lived statement
-        v                                v
-HumanIdentityAssertion          SignedWorkloadIdentity
-        \                                /
-         \                              /
-          +---- registered AgentDescriptor ----+
-                         |
-                         v
-             AuthenticatedAgentIdentity
-                         |
-               institution signature
-                         v
-          SignedAuthenticatedAgentIdentity
-                         |
-AgentActionEnvelope -----+----- Institution Policy Bundle
-                         |
-                         v
-              AuthenticatedPolicyEngine
-                         |
-                         v
+Human OIDC identity             Institution workload identity
+        \                               /
+         +---- Signed authenticated agent ----+
+                          |
+AgentActionEnvelope ------+------ PolicyBundle
+                          |
+                          v
+             AuthenticatedPolicyEngine
+                          |
+                          v
           AuthenticatedAuthorizationDecision
-                         |
-                         v
-              future enforcement point
+                          |
+                          v
+                    ApprovalGate
+               /          |           \
+      authority grants  signatures  replay ledger
+               \          |           /
+                +---------+----------+
+                          |
+                          v
+                 ApprovalResolution
+                          |
+                          v
+                future enforcement point
 ```
 
-The v0.1 `AgentActionEnvelope` binds the institution, agent, human owner, model, tool/action, resource, data classification, business purpose, environment, risk tier, input digest, and request timestamp.
-
-v0.2 adds two independent identity sources:
-
-- a human identity assertion verified from an OIDC ID token against operator-supplied pinned JWKS and a registered owner→provider→subject mapping;
-- a short-lived workload identity statement signed by an institution-owned Ed25519 signer and verified against an institution trust bundle.
-
-The two sources are bound to the registered agent/model. The resulting `AuthenticatedAgentIdentity` expires at the earlier underlying identity expiry, but that raw context is **not** accepted as policy authority. It must itself be domain-separated and institution-signed as `SignedAuthenticatedAgentIdentity`. Unsigned, tampered, expired, cross-institution, request-mismatched, or registration-drifted contexts fail closed.
-
-The policy core emits exactly one of four decisions:
-
-- `ALLOW`
-- `DENY`
-- `REQUIRE_HUMAN_APPROVAL`
-- `ALLOW_WITH_CONSTRAINTS`
-
-Conservative precedence is deterministic:
+Policy precedence remains deterministic:
 
 `DENY > REQUIRE_HUMAN_APPROVAL > ALLOW_WITH_CONSTRAINTS > ALLOW`
 
-No matching rule means **DENY**. Identity verification failure also means a non-executable **DENY** before an allow rule can take effect.
+No matching rule means **DENY**. Identity failure also means **DENY**. Human approval never overrides either condition.
 
-## v0.2 identity boundary
+## v0.3 approval boundary
 
-OIDC verification requires a configured HTTPS issuer and client id, an explicit asymmetric algorithm allowlist, an exact `kid`, pinned JWKS, exact registered subject and transaction nonce, audience checks, time checks, and optional ACR policy. Dynamic key-selection headers (`jku`, `x5u`, `crit`) are rejected. Raw bearer tokens and raw nonces are not retained in evidence artifacts; SHA-256 bindings are retained instead.
+v0.3 introduces a separate approval gate after authenticated policy evaluation.
 
-Workload identity statements bind institution, agent, human owner, model provider/model id, workload id, challenge digest, issuance time, and expiry. Their lifetime is capped at 15 minutes. Provider-neutral signing interfaces allow private-key custody to remain in an HSM/KMS-backed or otherwise institution-controlled signing boundary.
+An approval requirement is issued when:
 
-The final authenticated context is also Ed25519-signed using a distinct signing-document purpose. This closes the boundary between “a dataclass that looks authenticated” and identity evidence the policy engine is willing to trust.
+- policy returns `REQUIRE_HUMAN_APPROVAL`;
+- the request risk tier is `high`; or
+- the request risk tier is `critical`.
 
-See [docs/IDENTITY.md](docs/IDENTITY.md) for the full trust and failure model.
+The reference escalation policy requires at least one independent approval for high risk and two distinct approvals for critical risk. Requester/approver separation applies to policy-required, high-risk and critical-risk approval flows.
+
+Approval requirements bind the exact request digest, authenticated authorization digest, signed identity-context digest, requester, tool/action, environment, risk tier, escalation policy and expiry.
+
+### Delegated authority
+
+`ApprovalAuthorityGrant` separates the right to approve from the cryptographic key used to sign an approval. A grant scopes a principal to specific tools, actions, environments, maximum risk tier and validity interval.
+
+Delegated grants cannot expand the parent grant: tool/action/environment scope must remain a subset, maximum risk cannot increase, validity cannot outlive the parent, the issuer must be the parent subject, and the parent must explicitly permit delegation. Delegation cycles fail closed.
+
+### Signed approvals
+
+Each `ApprovalStatement` binds the requirement, request, approver, authority grant, vote, timestamps and rationale digest. The signed artifact uses Ed25519 and domain-separated purpose `regagentops.human-approval.v1`.
+
+Approval trust keys are institution- and principal-scoped. Disabled, expired, wrong-principal, ambiguous or invalid-signature keys are rejected.
+
+### Replay prevention
+
+The reference `ApprovalReplayLedger` uses append-only SQLite insertion and makes the **approval requirement digest** the one-time redemption key.
+
+A valid denial or a sufficient approval set terminally consumes the requirement. A later package cannot redeem the same requirement using a different set of approvals. An insufficient package does not consume the requirement and may be completed before expiry.
+
+See [docs/APPROVALS.md](docs/APPROVALS.md) for the full approval and delegation model.
+
+## Identity boundary
+
+v0.2 controls remain active. OIDC verification is offline against operator-supplied pinned JWKS, with issuer/client/audience/algorithm/nonce/subject/time checks and dynamic key-selection header rejection. Workload identity is short-lived and institution-signed. The combined authenticated context is itself domain-separated and signed before policy use.
+
+See [docs/IDENTITY.md](docs/IDENTITY.md).
 
 ## Safety baseline
 
-v0.2 is still authorization/identity-only and simulation-first:
+v0.3 remains governance-only and simulation-first:
 
 - default deny;
 - no production tool execution in the RegAgentOps runtime;
 - no arbitrary command or shell execution;
 - no embedded production credentials, bearer tokens, or long-lived private keys;
 - no autonomous target/resource discovery;
-- no network-capable MCP connection in the authorization core;
-- no online OIDC discovery or JWKS retrieval in the identity verifier;
-- unsigned authenticated contexts are rejected by the authenticated policy path;
-- raw prompts and raw tool arguments are not required in governance artifacts;
-- human approval remains explicit where policy requires it;
-- no OpenID Provider, SPIFFE-conformance, regulatory, or standards-certification claim.
+- no network-capable MCP connection in authorization, identity, or approval modules;
+- no online OIDC discovery or JWKS retrieval;
+- unsigned authenticated contexts are rejected;
+- human approval cannot override policy or identity denial;
+- approval continuation is not execution permission from a runtime executor;
+- no regulatory or standards-certification claim.
 
-An `ALLOW` decision means only that supplied policy permits the request after applicable identity checks. **v0.2 contains no executor.**
+`ApprovalResolution.authorization_continuation_permitted=true` means only that the v0.3 governance gates were satisfied for the bound artifacts. **v0.3 contains no executor and does not prove that a later execution matches the approval.**
 
 ## Quick start
 
@@ -109,55 +121,62 @@ regagentops --version
 regagentops demo-decision
 ```
 
-The demo evaluates a synthetic request and emits a constrained authorization decision. It performs no tool execution and makes no network call.
+The CLI demo remains synthetic and offline. It performs no tool execution and makes no network call.
 
 ## Repository map
 
 ```text
 src/regagentops/
   models.py                              authorization artifacts and canonical digests
-  registry.py                            institution-scoped agent and tool/action registries
+  registry.py                            institution-scoped agent/tool registry
   policy.py                              deterministic fail-closed policy engine
-  identity_models.py                     OIDC/workload/authenticated identity artifacts
+  identity_models.py                     identity artifacts and trust models
   oidc.py                                offline pinned-JWKS OIDC verification
-  registered_identity.py                 owner/provider/subject registry binding
-  workload_identity.py                   workload signing interface and Ed25519 verification
+  registered_identity.py                 owner/provider/subject binding
+  workload_identity.py                   signed workload identity
   identity_binding.py                    human + workload + agent binding
-  authenticated_identity_signature.py    signed authenticated-context anti-forgery boundary
-  authenticated_policy.py                signed-identity-gated policy evaluation
-  cli.py                                 offline synthetic authorization demo
+  authenticated_identity_signature.py    signed authenticated-context boundary
+  authenticated_policy.py                identity-gated policy evaluation
+  approval_models.py                     approval/delegation artifacts
+  approval_authority.py                  delegated-authority validation
+  approval_signature.py                  signed human approval verification
+  approval_replay.py                     one-time requirement redemption ledger
+  approval_engine.py                     escalation and approval resolution
+  cli.py                                 offline synthetic demo
 
 schemas/
-  agent-action-envelope.schema.json
-  authorization-decision.schema.json
-  policy-bundle.schema.json
-  oidc-verifier-config.schema.json
-  human-identity-assertion.schema.json
-  workload-identity-statement.schema.json
-  workload-identity-trust-bundle.schema.json
-  signed-workload-identity.schema.json
-  authenticated-agent-identity.schema.json
-  signed-authenticated-agent-identity.schema.json
-  authenticated-authorization-decision.schema.json
+  ... v0.1/v0.2 contracts ...
+  approval-authority-grant.schema.json
+  approval-escalation-policy.schema.json
+  approval-requirement.schema.json
+  approval-trust-bundle.schema.json
+  signed-approval-statement.schema.json
+  signed-approval-package.schema.json
+  approval-resolution.schema.json
 
 tests/
   test_policy.py
   test_contracts.py
   test_identity.py
   test_registered_identity.py
+  test_approvals.py
 
 docs/
   ARCHITECTURE.md
   IDENTITY.md
+  APPROVALS.md
   THREAT_MODEL.md
   ROADMAP.md
 ```
 
 ## CI boundary
 
-GitHub Actions tests Python 3.11, 3.12, and 3.13, performs a clean-wheel smoke test, and statically rejects network/process capability imports in the authorization and identity core. A dedicated **Authenticated Identity Boundary** workflow locks the v0.2 package/dependency surface, runs identity-specific cryptographic regression tests, forbids network-capable `PyJWKClient`, checks remote-key-header rejection guards, and regression-checks that authenticated policy requires signed context.
+GitHub Actions tests Python 3.11, 3.12 and 3.13 and performs clean-wheel smoke testing. Generic CI rejects network/process imports across authorization, identity and approval core modules.
 
-This separation is intentional: future approval, MCP, and execution adapters must remain outside the pure authorization/identity boundary unless their release explicitly changes the trust model.
+Dedicated workflows additionally enforce:
+
+- **Authenticated Identity Boundary** — offline pinned-trust identity verification and signed-context regression;
+- **Human Approval Boundary** — approval regression tests, v0.3 version/dependency contract, Ed25519 domain separation, append-only replay-ledger SQL surface and no policy-`DENY` override.
 
 ## Standards and ecosystem references
 
@@ -171,19 +190,17 @@ RegAgentOps uses external frameworks as **design inputs**, not certification cla
 - SPIFFE specifications: https://spiffe.io/docs/latest/spiffe-specs/
 - Model Context Protocol specification: https://modelcontextprotocol.io/specification
 
-MCP treats tool capabilities as security-sensitive and emphasizes user control. RegAgentOps' future MCP adapter is intended to add enterprise authorization evidence around that trust boundary rather than replace MCP itself.
-
-SPIFFE is referenced conceptually for workload identity and trust separation. RegAgentOps v0.2 does not implement SPIFFE Workload API, SVID issuance, or SPIFFE conformance.
+These references inform trust and governance design. RegAgentOps does not claim protocol conformance beyond the contracts it explicitly implements.
 
 ## Roadmap
 
-`v0.1 authorization → v0.2 authenticated identity → v0.3 signed human approval → v0.4 MCP governance → v0.5 signed execution receipts → v0.6 data/purpose governance → v0.7 assurance evidence → v0.8 tenant/crypto hardening → v0.9 production reference → v1.0 stable release`
+`v0.1 authorization → v0.2 authenticated identity → v0.3 human approval/delegated authority → v0.4 MCP governance → v0.5 signed execution receipts → v0.6 data/purpose governance → v0.7 assurance evidence → v0.8 tenant/crypto hardening → v0.9 production reference → v1.0 stable release`
 
-See [docs/ROADMAP.md](docs/ROADMAP.md) for release gates.
+See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Security
 
-See [SECURITY.md](SECURITY.md), [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md), and [docs/IDENTITY.md](docs/IDENTITY.md).
+See [SECURITY.md](SECURITY.md), [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md), [docs/IDENTITY.md](docs/IDENTITY.md), and [docs/APPROVALS.md](docs/APPROVALS.md).
 
 ## License
 
