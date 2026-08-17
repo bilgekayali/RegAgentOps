@@ -5,7 +5,7 @@
 - authorization policy integrity;
 - institution, human-owner, agent, model, and workload identity bindings;
 - OIDC verifier configuration and pinned JWKS integrity;
-- institution workload trust-bundle integrity;
+- institution workload/context trust-bundle integrity;
 - tool/action registry integrity;
 - authorization and authenticated-identity evidence integrity;
 - raw bearer-token and nonce confidentiality;
@@ -16,7 +16,7 @@
 1. **Caller → identity/PDP**: the caller supplies the action request, raw OIDC token, transaction nonce, and externally governed trust material; all are untrusted until verified.
 2. **Human identity registry → OIDC verifier**: owner→provider→subject mappings are privileged administrative configuration.
 3. **Pinned JWKS/config → OIDC verifier**: trust material must come from a separately governed configuration path; the verifier performs no online discovery.
-4. **Institution workload signer → verifier**: private-key custody remains outside the verifier; only signed statements and public trust bundles cross the boundary.
+4. **Institution workload/context signer → verifier**: private-key custody remains outside the verifier; only signed statements/contexts and public trust bundles cross the boundary.
 5. **Registry/policy configuration → PDP**: agent/tool/policy configuration is security-sensitive administrative input.
 6. **PDP → future enforcement point**: v0.2 produces decisions but does not enforce or execute actions.
 
@@ -46,17 +46,23 @@ Threat: a process claims to be an authorized agent/model workload.
 
 Controls: short-lived workload statement; institution/agent/owner/model/workload/challenge binding; Ed25519 signature; institution-scoped trust bundle; exact key-id selection; active-key and validity-window checks.
 
+### Fabricated authenticated context
+
+Threat: a caller skips OIDC/workload verification and directly constructs an `AuthenticatedAgentIdentity` object with values that appear valid.
+
+Controls: the raw context is not accepted as policy authority. It must be domain-separated and Ed25519-signed as `SignedAuthenticatedAgentIdentity`; the policy engine verifies that signature against institution trust before using the context. Unsigned, tampered, untrusted, or expired contexts produce non-executable `DENY`.
+
 ### Registration drift after authentication
 
 Threat: an authenticated context remains usable after the agent's registered owner/model configuration changes.
 
-Control: `AuthenticatedAgentIdentity` binds the `AgentDescriptor` digest and `AuthenticatedPolicyEngine` rechecks it before policy evaluation.
+Control: the context binds the `AgentDescriptor` digest and `AuthenticatedPolicyEngine` rechecks it before policy evaluation.
 
 ### Cross-tenant identity replay
 
-Threat: human/workload evidence from one institution is replayed for another.
+Threat: human/workload/context evidence from one institution is replayed for another.
 
-Control: institution id is independently bound into provider config, human assertion, workload statement, trust keys/bundle, registered agent, request, and authenticated context. Mismatch fails closed.
+Control: institution id is independently bound into provider config, human assertion, workload statement, trust keys/bundle, registered agent, signed context, request, and authorization evidence. Mismatch fails closed.
 
 ### Unregistered tool/action use
 
@@ -74,7 +80,7 @@ Control: requested classification must be explicitly present in the tool/action 
 
 Threat: missing or overlapping rules accidentally grant access.
 
-Control: no-match is `DENY`; multiple matches use conservative precedence (`DENY` > approval > constrained allow > allow). Identity failure is evaluated before a policy allow can take effect.
+Control: no-match is `DENY`; multiple matches use conservative precedence (`DENY` > approval > constrained allow > allow). Identity verification is evaluated before a policy allow can take effect.
 
 ### Bearer material copied into governance evidence
 
@@ -86,11 +92,11 @@ Control: returned identity artifacts retain SHA-256 bindings rather than the raw
 
 Threat: later changes quietly add network/process execution or online JWKS retrieval.
 
-Control: generic CI and the dedicated Authenticated Identity Boundary statically reject network/process imports; `PyJWKClient` is explicitly forbidden.
+Control: generic CI and the dedicated Authenticated Identity Boundary statically reject network/process imports; `PyJWKClient` is explicitly forbidden and signed-context enforcement is regression checked.
 
 ## Residual risks
 
-v0.2 assumes the separately governed JWKS/config path and workload trust-bundle distribution path are themselves protected. It also assumes the institution signer authenticates/attests the workload correctly before signing; RegAgentOps verifies the resulting evidence but does not implement host-level workload attestation in v0.2.
+v0.2 assumes the separately governed JWKS/config path and trust-bundle distribution path are protected. It also assumes institution signing providers authenticate/attest the workload and context-establishment service correctly before signing. RegAgentOps verifies resulting evidence but does not implement host-level workload attestation or HSM policy enforcement in v0.2.
 
 ## Explicit non-claims
 
