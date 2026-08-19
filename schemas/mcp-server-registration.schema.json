@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RegAgentOps MCP Server Registration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["institution_id","server_id","server_version","expected_server_name","transport_profile","server_identity_digest","metadata_digest","approved","registered_at","schema_version"],
+  "properties": {
+    "institution_id": {"type":"string","minLength":1,"maxLength":256},
+    "server_id": {"type":"string","minLength":1,"maxLength":64},
+    "server_version": {"type":"integer","minimum":1},
+    "expected_server_name": {"type":"string","minLength":1,"maxLength":256},
+    "transport_profile": {"enum":["stdio","streamable_http","other"]},
+    "server_identity_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "metadata_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "approved": {"type":"boolean"},
+    "registered_at": {"type":"string","format":"date-time","pattern":"Z$"},
+    "schema_version": {"const":"regagentops.mcp-server-registration.v1"}
+  }
+}
