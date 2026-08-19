@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RegAgentOps MCP Policy Enforcement Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["institution_id","request_digest","mcp_registry_snapshot_digest","server_registration_digest","tool_snapshot_digest","tool_descriptor_digest","authenticated_authorization_digest","identity_verified","decision","reason_codes","execution_permitted","execution_performed","evaluated_at","schema_version"],
+  "properties": {
+    "institution_id": {"type":"string","minLength":1,"maxLength":256},
+    "request_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "mcp_registry_snapshot_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "server_registration_digest": {"oneOf":[{"type":"string","pattern":"^[0-9a-f]{64}$"},{"type":"null"}]},
+    "tool_snapshot_digest": {"oneOf":[{"type":"string","pattern":"^[0-9a-f]{64}$"},{"type":"null"}]},
+    "tool_descriptor_digest": {"oneOf":[{"type":"string","pattern":"^[0-9a-f]{64}$"},{"type":"null"}]},
+    "authenticated_authorization_digest": {"oneOf":[{"type":"string","pattern":"^[0-9a-f]{64}$"},{"type":"null"}]},
+    "identity_verified": {"type":"boolean"},
+    "decision": {"enum":["ALLOW","DENY","REQUIRE_HUMAN_APPROVAL","ALLOW_WITH_CONSTRAINTS"]},
+    "reason_codes": {"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":256}},
+    "execution_permitted": {"type":"boolean"},
+    "execution_performed": {"const":false},
+    "evaluated_at": {"type":"string","format":"date-time","pattern":"Z$"},
+    "schema_version": {"const":"regagentops.mcp-policy-enforcement-result.v1"}
+  }
+}
