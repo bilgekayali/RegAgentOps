@@ -27,7 +27,7 @@ class StableReleaseLifecycleHardeningTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot predate its bound readiness evidence"):
             self.fixture.register_baseline(baseline)
 
-    def test_registered_baseline_currentness_fails_closed_after_production_drift(self):
+    def test_registered_baseline_currentness_binds_exact_upgrade_path_and_fails_after_drift(self):
         registry = StableReleaseRegistry(self.fixture.production)
         registry.register_baseline(
             self.fixture.baseline,
@@ -43,7 +43,17 @@ class StableReleaseLifecycleHardeningTests(unittest.TestCase):
             self.fixture.baseline,
             source_release=self.fixture.source_release,
             production_release=self.fixture.target_release,
+            upgrade_path=self.fixture.upgrade_path,
         )
+
+        substituted_path = replace(self.fixture.upgrade_path, migration_plan_digest="f" * 64)
+        with self.assertRaisesRegex(ValueError, "currentness upgrade path digest mismatch"):
+            registry.assert_baseline_current(
+                self.fixture.baseline,
+                source_release=self.fixture.source_release,
+                production_release=self.fixture.target_release,
+                upgrade_path=substituted_path,
+            )
 
         egress_v2 = EgressPolicy(
             institution_id="bank-demo",
@@ -70,6 +80,7 @@ class StableReleaseLifecycleHardeningTests(unittest.TestCase):
                 self.fixture.baseline,
                 source_release=self.fixture.source_release,
                 production_release=self.fixture.target_release,
+                upgrade_path=self.fixture.upgrade_path,
             )
 
 
