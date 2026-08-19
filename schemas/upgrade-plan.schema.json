@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://regagentops.example/schemas/upgrade-plan.schema.json",
+  "title": "UpgradePlan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["institution_id", "tenant_id", "upgrade_id", "from_release_digest", "to_release_digest", "migration_plan_digest", "preflight_check_digest", "post_deploy_check_digest", "rollback_plan_digest", "signed_configuration_change_digest", "created_at", "schema_version"],
+  "properties": {
+    "institution_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "tenant_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "upgrade_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "from_release_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "to_release_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "migration_plan_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "preflight_check_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "post_deploy_check_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "rollback_plan_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "signed_configuration_change_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "schema_version": {"const": "regagentops.upgrade-plan.v1"}
+  }
+}
