@@ -6,7 +6,8 @@ import unittest
 import test_mcp as mcp_test_module
 
 from regagentops.mcp import McpToolBinding
-from regagentops.models import Decision
+from regagentops.models import DataClassification, Decision, Environment, RiskTier
+from regagentops.policy import PolicyBundle, PolicyRule
 
 
 class McpHardeningTests(unittest.TestCase):
@@ -46,9 +47,24 @@ class McpHardeningTests(unittest.TestCase):
     def test_pep_result_preserves_constraints_and_approval_flag(self):
         identity, registry, _, _, _, binding = mcp_test_module.McpGovernanceTests()._stack()
         request = mcp_test_module.McpGovernanceTests()._request(binding)
-        constrained = mcp_test_module.McpGovernanceTests()._policy(binding, effect=Decision.ALLOW_WITH_CONSTRAINTS)
-        rule = constrained.rules[0]
-        constrained = replace(constrained, rules=(replace(rule, constraints=("read-only",)),))
+        constrained = PolicyBundle(
+            institution_id="bank-demo",
+            rules=(
+                PolicyRule(
+                    rule_id="mcp-constrained-read",
+                    institution_id="bank-demo",
+                    agent_id="ops-assistant",
+                    tool_id=binding.governed_tool_id,
+                    action="invoke",
+                    business_purposes=("customer-support",),
+                    environments=(Environment.TEST,),
+                    data_classifications=(DataClassification.CONFIDENTIAL,),
+                    risk_tiers=(RiskTier.MODERATE,),
+                    effect=Decision.ALLOW_WITH_CONSTRAINTS,
+                    constraints=("read-only",),
+                ),
+            ),
+        )
         outcome = mcp_test_module.McpGovernanceTests()._pep(identity, registry).evaluate(
             request,
             constrained,
@@ -61,11 +77,11 @@ class McpHardeningTests(unittest.TestCase):
         self.assertFalse(outcome.result.human_approval_required)
         self.assertTrue(outcome.result.execution_permitted)
 
-        approval_request = mcp_test_module.McpGovernanceTests()._request(binding, risk=mcp_test_module.RiskTier.HIGH)
+        approval_request = mcp_test_module.McpGovernanceTests()._request(binding, risk=RiskTier.HIGH)
         approval_policy = mcp_test_module.McpGovernanceTests()._policy(
             binding,
             effect=Decision.REQUIRE_HUMAN_APPROVAL,
-            risk=mcp_test_module.RiskTier.HIGH,
+            risk=RiskTier.HIGH,
         )
         approval_outcome = mcp_test_module.McpGovernanceTests()._pep(identity, registry).evaluate(
             approval_request,
