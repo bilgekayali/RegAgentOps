@@ -1,0 +1,130 @@
+name: Signed Execution Receipt Boundary
+
+on:
+  push:
+    branches:
+      - main
+      - "agent/**"
+    paths:
+      - "src/regagentops/execution.py"
+      - "tests/test_execution*.py"
+      - "schemas/emergency-stop-state.schema.json"
+      - "schemas/execution-*.json"
+      - "schemas/tool-execution-receipt.schema.json"
+      - "schemas/signed-tool-execution-receipt.schema.json"
+      - "pyproject.toml"
+      - "README.md"
+      - "docs/EXECUTION_RECEIPTS.md"
+      - "docs/ARCHITECTURE.md"
+      - "docs/ROADMAP.md"
+      - "docs/THREAT_MODEL.md"
+      - ".github/workflows/execution-boundary.yml"
+  pull_request:
+    paths:
+      - "src/regagentops/execution.py"
+      - "tests/test_execution*.py"
+      - "schemas/emergency-stop-state.schema.json"
+      - "schemas/execution-*.json"
+      - "schemas/tool-execution-receipt.schema.json"
+      - "schemas/signed-tool-execution-receipt.schema.json"
+      - "pyproject.toml"
+      - "README.md"
+      - "docs/EXECUTION_RECEIPTS.md"
+      - "docs/ARCHITECTURE.md"
+      - "docs/ROADMAP.md"
+      - "docs/THREAT_MODEL.md"
+      - ".github/workflows/execution-boundary.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  signed-execution-receipt-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install package
+        run: python -m pip install -e .
+      - name: Run execution regression tests
+        run: python -m unittest discover -s tests -p 'test_execution*.py' -v
+      - name: Verify v0.5 execution contracts
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import tomllib
+
+          payload = tomllib.load(open('pyproject.toml', 'rb'))
+          assert payload['project']['version'] == '0.5.0'
+          assert payload['project']['dependencies'] == ['PyJWT[crypto]>=2.13,<3']
+
+          expected = {
+              'emergency-stop-state.schema.json': 'regagentops.emergency-stop-state.v1',
+              'execution-lease.schema.json': 'regagentops.execution-lease.v1',
+              'execution-lease-consumption.schema.json': 'regagentops.execution-lease-consumption.v1',
+              'execution-trust-bundle.schema.json': 'regagentops.execution-trust-bundle.v1',
+              'tool-execution-receipt.schema.json': 'regagentops.tool-execution-receipt.v1',
+              'signed-tool-execution-receipt.schema.json': 'regagentops.signed-tool-execution-receipt.v1',
+          }
+          for filename, discriminator in expected.items():
+              schema = json.loads((Path('schemas') / filename).read_text(encoding='utf-8'))
+              assert schema['$schema'] == 'https://json-schema.org/draft/2020-12/schema'
+              assert schema['additionalProperties'] is False
+              assert schema['properties']['schema_version']['const'] == discriminator
+
+          lease = json.loads(Path('schemas/execution-lease.schema.json').read_text())
+          consumption = json.loads(Path('schemas/execution-lease-consumption.schema.json').read_text())
+          assert 'executor_id' in lease['required']
+          assert 'executor_id' in consumption['required']
+          receipt = json.loads(Path('schemas/tool-execution-receipt.schema.json').read_text())
+          assert 'result_digest' in receipt['required']
+          assert 'policy_decision_digest' in receipt['required']
+          assert 'lease_consumption_digest' in receipt['required']
+          signed = json.loads(Path('schemas/signed-tool-execution-receipt.schema.json').read_text())
+          assert signed['properties']['algorithm']['const'] == 'Ed25519'
+          PY
+      - name: Verify offline non-executing lease and receipt capability surface
+        shell: bash
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          path = Path('src/regagentops/execution.py')
+          source = path.read_text(encoding='utf-8')
+          tree = ast.parse(source, filename=str(path))
+          banned = {'asyncio', 'ftplib', 'http', 'requests', 'socket', 'subprocess', 'telnetlib', 'urllib'}
+          for node in ast.walk(tree):
+              if isinstance(node, ast.Import):
+                  roots = {alias.name.split('.')[0] for alias in node.names}
+              elif isinstance(node, ast.ImportFrom) and node.module:
+                  roots = {node.module.split('.')[0]}
+              else:
+                  continue
+              blocked = roots & banned
+              if blocked:
+                  raise SystemExit(f'{path}: forbidden capability import(s): {sorted(blocked)}')
+
+          for marker in ('requests.', 'httpx.', 'subprocess.', '.invoke(', '.execute_tool('):
+              if marker in source:
+                  raise SystemExit(f'execution core must remain offline and non-invoking: {marker}')
+          if 'EXECUTION_LEASE_MAX_SECONDS = 120' not in source:
+              raise SystemExit('execution leases must remain explicitly short-lived')
+          if 'EXECUTION_AUTHORIZATION_MAX_AGE_SECONDS = 120' not in source:
+              raise SystemExit('execution authorization must remain explicitly freshness-bounded')
+          if 'assert_recorded(consumption)' not in source:
+              raise SystemExit('receipt construction must prove lease consumption against the append-only ledger')
+          if 'executor_id != lease.executor_id' not in source:
+              raise SystemExit('lease redemption/receipt construction must retain executor binding')
+          if 'regagentops.tool-execution-receipt.v1' not in source or 'Ed25519' not in source:
+              raise SystemExit('execution receipts must remain domain-separated and Ed25519-backed')
+          upper = source.upper()
+          if 'UPDATE EXECUTION_LEASE_CONSUMPTIONS' in upper or 'DELETE FROM EXECUTION_LEASE_CONSUMPTIONS' in upper:
+              raise SystemExit('execution lease ledger must remain append-only')
+          if 'LEASE_DIGEST TEXT PRIMARY KEY' not in upper:
+              raise SystemExit('execution lease ledger must remain lease-keyed')
+          PY

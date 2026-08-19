@@ -51,11 +51,14 @@ RegAgentOps evolves from an offline authorization core into a production-referen
 
 ## v0.5.0 — Signed Execution Receipts
 
-- [ ] exact authorization-to-execution binding;
-- [ ] one-time execution lease;
-- [ ] signed tool execution receipt;
-- [ ] result digest and policy-decision linkage;
-- [ ] emergency-stop state verification.
+- [x] exact authorization-to-execution binding;
+- [x] one-time execution lease with atomic append-only redemption;
+- [x] domain-separated Ed25519 signed tool execution receipt;
+- [x] result digest and exact policy-decision linkage;
+- [x] append-only emergency-stop state verification at lease issuance and redemption;
+- [x] MCP governance drift invalidates unconsumed leases;
+- [x] exact approval requirement/resolution binding for approval-required execution;
+- [x] strict execution JSON contracts, adversarial tests and dedicated execution CI boundary.
 
 ## v0.6.0 — Data and Purpose Governance
 
