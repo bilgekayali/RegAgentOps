@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RegAgentOps Data Governance Decision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["institution_id","request_digest","registry_snapshot_digest","profile_digest","declaration_digest","business_purpose","data_categories","requested_output_handling","retention_seconds","decision","constraints","reason_codes","evaluated_at","schema_version"],
+  "properties": {
+    "institution_id": {"type":"string","minLength":1,"maxLength":256},
+    "request_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "registry_snapshot_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "profile_digest": {"oneOf":[{"type":"string","pattern":"^[0-9a-f]{64}$"},{"type":"null"}]},
+    "declaration_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "business_purpose": {"type":"string","minLength":1,"maxLength":512},
+    "data_categories": {"type":"array","minItems":1,"uniqueItems":true,"items":{"enum":["personal","sensitive_personal","financial","health","biometric","credential","location","confidential_business"]}},
+    "requested_output_handling": {"enum":["raw","redacted","aggregated","metadata_only"]},
+    "retention_seconds": {"type":"integer","minimum":0,"maximum":315360000},
+    "decision": {"enum":["ALLOW","DENY","ALLOW_WITH_CONSTRAINTS"]},
+    "constraints": {"type":"array","uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":256}},
+    "reason_codes": {"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":256}},
+    "evaluated_at": {"type":"string","format":"date-time","pattern":"Z$"},
+    "schema_version": {"const":"regagentops.data-governance-decision.v1"}
+  },
+  "allOf": [
+    {"if":{"properties":{"decision":{"const":"DENY"}},"required":["decision"]},"then":{"properties":{"constraints":{"maxItems":0}}}},
+    {"if":{"properties":{"decision":{"const":"ALLOW"}},"required":["decision"]},"then":{"properties":{"constraints":{"maxItems":0},"profile_digest":{"type":"string","pattern":"^[0-9a-f]{64}$"}}}},
+    {"if":{"properties":{"decision":{"const":"ALLOW_WITH_CONSTRAINTS"}},"required":["decision"]},"then":{"properties":{"constraints":{"minItems":1},"profile_digest":{"type":"string","pattern":"^[0-9a-f]{64}$"}}}}
+  ]
+}
