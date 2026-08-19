@@ -103,10 +103,13 @@ RegAgentOps evolves from an offline authorization core into a production-referen
 ## v0.9.0 — Production Reference Deployment
 
 - [x] isolated policy-enforcement worker profile with non-root/read-only/no-new-privileges/capability-drop/seccomp and host-namespace restrictions;
-- [x] strict tenant-scoped default-deny TLS/HTTPS egress with exact endpoints, wildcard/plaintext rejection and trust-policy evidence binding;
+- [x] strict tenant-scoped default-deny TLS/HTTPS egress with exact endpoints, wildcard/plaintext rejection, canonical IP enforcement and trust-policy evidence binding;
 - [x] strict tenant-scoped default-deny governed-tool→executor allowlisting with direct tool invocation forbidden in the policy worker;
+- [x] worker registration resolves the exact current v0.8 tenant-isolation profile rather than accepting an unverified digest;
+- [x] worker dependency chronology rejects profiles predating egress/tool/tenant-isolation state;
 - [x] release manifests binding exact source commit, artifact/checksum, worker/configuration, CodeQL and build-provenance evidence digests;
-- [x] release currentness invalidation after worker/egress/tool-policy drift;
+- [x] release chronology rejects manifests predating the bound worker profile;
+- [x] release currentness invalidation after worker/egress/tool-policy **or tenant-isolation** drift;
 - [x] exact recovery, upgrade and rollback contracts with reverse-transition validation and chronological provenance;
 - [x] CodeQL `security-extended` gate using `github/codeql-action@v4`;
 - [x] release provenance gate with deterministic wheel checksums and tag-scoped `actions/attest@v4` artifact attestations;
