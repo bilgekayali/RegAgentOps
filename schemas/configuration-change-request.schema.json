@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://regagentops.dev/schemas/configuration-change-request.schema.json",
+  "title": "ConfigurationChangeRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["change_id", "institution_id", "tenant_id", "sequence", "object_type", "object_id", "previous_configuration_digest", "proposed_configuration_digest", "change_reason_digest", "requested_by_human_id", "requested_at", "effective_at", "schema_version"],
+  "properties": {
+    "change_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "institution_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "tenant_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "sequence": {"type": "integer", "minimum": 1},
+    "object_type": {"type": "string", "minLength": 1, "maxLength": 256},
+    "object_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "previous_configuration_digest": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "proposed_configuration_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "change_reason_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "requested_by_human_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "requested_at": {"type": "string", "minLength": 2, "maxLength": 64, "pattern": "Z$"},
+    "effective_at": {"type": "string", "minLength": 2, "maxLength": 64, "pattern": "Z$"},
+    "schema_version": {"const": "regagentops.configuration-change-request.v1"}
+  }
+}
