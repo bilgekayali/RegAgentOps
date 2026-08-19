@@ -10,7 +10,7 @@ from .authenticated_identity_signature import SignedAuthenticatedAgentIdentity
 from .authenticated_policy import AuthenticatedAuthorizationDecision, AuthenticatedPolicyEngine
 from .execution import ExecutionGate, ExecutionLease, ExecutionLeaseConsumption, ExecutionOutcome, ToolExecutionReceipt
 from .identity_models import AuthenticatedAgentIdentity, WorkloadIdentityTrustBundle
-from .mcp import McpGovernanceRegistry, McpPolicyEnforcementOutcome, McpPolicyEnforcementPoint, McpPolicyEnforcementResult
+from .mcp import McpGovernanceRegistry, McpPolicyEnforcementOutcome, McpPolicyEnforcementPoint
 from .models import AgentActionEnvelope, DataClassification, Decision, RiskTier, _require_text, _require_utc_timestamp, digest_artifact
 from .policy import PolicyBundle
 from .registry import AgentRegistry
@@ -421,6 +421,18 @@ class DataGovernedAuthenticatedPolicyEngine:
             )
         return replace(authorization, authorization=governed)
 
+    @staticmethod
+    def _missing_context_deny(authorization: AuthenticatedAuthorizationDecision) -> AuthenticatedAuthorizationDecision:
+        denied = replace(
+            authorization.authorization,
+            decision=Decision.DENY,
+            constraints=(),
+            reason_codes=("data_governance_context_missing",),
+            human_approval_required=False,
+            policy_permits_execution=False,
+        )
+        return replace(authorization, authorization=denied)
+
     def evaluate(
         self,
         request: AgentActionEnvelope,
@@ -441,15 +453,7 @@ class DataGovernedAuthenticatedPolicyEngine:
         if not base.identity_verified or base.decision is Decision.DENY:
             return DataGovernedAuthorizationOutcome(base, None)
         if data_use is None:
-            denied = replace(
-                base.authorization,
-                decision=Decision.DENY,
-                constraints=(),
-                reason_codes=("data_governance_context_missing",),
-                human_approval_required=False,
-                policy_permits_execution=False,
-            )
-            return DataGovernedAuthorizationOutcome(replace(base, authorization=denied), None)
+            return DataGovernedAuthorizationOutcome(self._missing_context_deny(base), None)
         data_decision = self._data.evaluate(request, data_use, evaluated_at=evaluated_at)
         return DataGovernedAuthorizationOutcome(
             self._with_governance_evidence(base, data_decision),
@@ -464,7 +468,7 @@ class DataPurposeMcpPolicyEnforcementOutcome:
 
 
 class DataPurposeMcpPolicyEnforcementPoint:
-    """v0.6 adapter that layers resource-purpose governance over the existing v0.4 MCP PEP."""
+    """v0.6 single-pass adapter layering data governance over one exact v0.4 MCP PEP outcome."""
 
     def __init__(self, agents: AgentRegistry, mcp_registry: McpGovernanceRegistry, data_governance: DataGovernanceRegistry) -> None:
         self._base = McpPolicyEnforcementPoint(agents, mcp_registry)
@@ -495,17 +499,17 @@ class DataPurposeMcpPolicyEnforcementPoint:
         )
         if base.authorization is None or not base.authorization.identity_verified or base.result.decision is Decision.DENY:
             return DataPurposeMcpPolicyEnforcementOutcome(base, None)
-        tools = self._base._mcp.current_tool_registry(request.institution_id)
-        agents = self._base._agents
-        governed = DataGovernedAuthenticatedPolicyEngine(agents, tools, self._data).evaluate(
-            request,
-            policy,
-            identity,
-            identity_trust_bundle=identity_trust_bundle,
-            data_use=data_use,
-            evaluated_at=evaluated_at,
-        )
-        authorization = governed.authorization
+
+        if data_use is None:
+            authorization = DataGovernedAuthenticatedPolicyEngine._missing_context_deny(base.authorization)
+            data_decision = None
+        else:
+            data_decision = self._data.evaluate(request, data_use, evaluated_at=evaluated_at)
+            authorization = DataGovernedAuthenticatedPolicyEngine._with_governance_evidence(
+                base.authorization,
+                data_decision,
+            )
+
         approval_required = self._approval_required(authorization, request.risk_tier)
         result = replace(
             base.result,
@@ -518,7 +522,7 @@ class DataPurposeMcpPolicyEnforcementPoint:
             execution_permitted=authorization.authorization.policy_permits_execution and not approval_required,
         )
         outcome = McpPolicyEnforcementOutcome(request, result, authorization)
-        return DataPurposeMcpPolicyEnforcementOutcome(outcome, governed.data_governance)
+        return DataPurposeMcpPolicyEnforcementOutcome(outcome, data_decision)
 
 
 class DataGovernedExecutionGate:
