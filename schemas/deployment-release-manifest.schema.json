@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://regagentops.example/schemas/deployment-release-manifest.schema.json",
+  "title": "DeploymentReleaseManifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["institution_id", "tenant_id", "release_id", "release_version", "source_commit_sha", "artifact_name", "artifact_sha256", "worker_profile_digest", "configuration_digest", "codeql_evidence_digest", "provenance_attestation_digest", "checksum_manifest_digest", "created_at", "schema_version"],
+  "properties": {
+    "institution_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "tenant_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "release_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "release_version": {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"},
+    "source_commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "artifact_name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,254}$"},
+    "artifact_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "worker_profile_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "configuration_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "codeql_evidence_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "provenance_attestation_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "checksum_manifest_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "schema_version": {"const": "regagentops.deployment-release-manifest.v1"}
+  }
+}
