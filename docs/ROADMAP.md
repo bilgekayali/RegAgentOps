@@ -62,11 +62,15 @@ RegAgentOps evolves from an offline authorization core into a production-referen
 
 ## v0.6.0 — Data and Purpose Governance
 
-- [ ] richer data classification policy;
-- [ ] purpose limitation and purpose compatibility;
-- [ ] PII/sensitive-data constraints;
-- [ ] output handling and redaction requirements;
-- [ ] retention-aware action policy.
+- [x] versioned institution-owned resource profiles with richer governed data categories;
+- [x] exact request-bound data-use declarations and category under-reporting rejection;
+- [x] primary-purpose limitation and explicit compatible-secondary-purpose handling;
+- [x] PII/sensitive-data minimization constraints;
+- [x] output handling and mandatory redaction/aggregation downgrade requirements;
+- [x] retention-aware action policy with explicit per-resource ceilings;
+- [x] data-governance evidence digests bound into authenticated authorization;
+- [x] data-governance snapshot/profile drift invalidates lease issuance or redemption;
+- [x] strict data-purpose JSON contracts, adversarial tests and dedicated data-governance CI boundary.
 
 ## v0.7.0 — Assurance Evidence
 
