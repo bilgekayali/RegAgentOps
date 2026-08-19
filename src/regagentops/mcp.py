@@ -10,7 +10,6 @@ from .authenticated_policy import AuthenticatedAuthorizationDecision, Authentica
 from .identity_models import AuthenticatedAgentIdentity, WorkloadIdentityTrustBundle
 from .models import (
     AgentActionEnvelope,
-    AgentDescriptor,
     DataClassification,
     Decision,
     ToolActionDescriptor,
@@ -138,12 +137,12 @@ class McpToolSnapshot:
         _require_digest("observed_server_identity_digest", self.observed_server_identity_digest)
         if len(self.tools) > MCP_MAX_TOOLS_PER_SNAPSHOT:
             raise ValueError(f"MCP tool snapshot cannot contain more than {MCP_MAX_TOOLS_PER_SNAPSHOT} tools")
+        if any(not isinstance(tool, McpToolDescriptor) for tool in self.tools):
+            raise ValueError("MCP tool snapshot entries must be McpToolDescriptor values")
         names = [tool.name for tool in self.tools]
         if len(names) != len(set(names)):
             raise ValueError("MCP tool snapshot contains duplicate tool names within one server")
         for tool in self.tools:
-            if not isinstance(tool, McpToolDescriptor):
-                raise ValueError("MCP tool snapshot entries must be McpToolDescriptor values")
             if tool.institution_id != self.institution_id or tool.server_id != self.server_id:
                 raise ValueError("MCP tool snapshot contains cross-scope tool metadata")
             if tool.server_registration_digest != self.server_registration_digest:
@@ -209,7 +208,9 @@ class McpPolicyEnforcementResult:
     authenticated_authorization_digest: str | None
     identity_verified: bool
     decision: Decision
+    constraints: tuple[str, ...]
     reason_codes: tuple[str, ...]
+    human_approval_required: bool
     execution_permitted: bool
     execution_performed: bool
     evaluated_at: str
@@ -229,18 +230,31 @@ class McpPolicyEnforcementResult:
         _require_bool("identity_verified", self.identity_verified)
         if not isinstance(self.decision, Decision):
             raise ValueError("decision must be a governed Decision")
+        if len(set(self.constraints)) != len(self.constraints):
+            raise ValueError("constraints must be unique")
+        for constraint in self.constraints:
+            _require_text("constraint", constraint)
+        if self.decision is Decision.ALLOW_WITH_CONSTRAINTS and not self.constraints:
+            raise ValueError("ALLOW_WITH_CONSTRAINTS requires represented constraints")
+        if self.decision is not Decision.ALLOW_WITH_CONSTRAINTS and self.constraints:
+            raise ValueError("constraints are only valid for ALLOW_WITH_CONSTRAINTS")
         if not self.reason_codes or len(set(self.reason_codes)) != len(self.reason_codes):
             raise ValueError("reason_codes must be non-empty and unique")
         for reason in self.reason_codes:
             _require_text("reason_code", reason)
+        _require_bool("human_approval_required", self.human_approval_required)
         _require_bool("execution_permitted", self.execution_permitted)
         _require_bool("execution_performed", self.execution_performed)
         if self.execution_performed:
             raise ValueError("MCP policy enforcement adapter does not execute tools")
-        if self.decision is Decision.DENY and self.execution_permitted:
-            raise ValueError("DENY cannot permit execution")
-        if self.decision is Decision.REQUIRE_HUMAN_APPROVAL and self.execution_permitted:
-            raise ValueError("human-approval decision cannot permit execution before approval resolution")
+        if self.decision is Decision.DENY:
+            if self.human_approval_required or self.execution_permitted:
+                raise ValueError("DENY cannot require human approval or permit execution")
+        elif self.decision is Decision.REQUIRE_HUMAN_APPROVAL:
+            if not self.human_approval_required or self.execution_permitted:
+                raise ValueError("REQUIRE_HUMAN_APPROVAL must require approval and cannot yet permit execution")
+        elif self.human_approval_required:
+            raise ValueError("non-approval decisions cannot require human approval")
         _require_utc_timestamp("evaluated_at", self.evaluated_at)
         _require_text("schema_version", self.schema_version)
 
@@ -265,6 +279,10 @@ class McpPolicyEnforcementOutcome:
             raise ValueError("MCP result and authenticated authorization must bind the same request")
         if self.authorization.decision is not self.result.decision:
             raise ValueError("MCP result and authenticated authorization decisions must match")
+        if self.authorization.authorization.constraints != self.result.constraints:
+            raise ValueError("MCP result constraints must match authenticated authorization")
+        if self.authorization.authorization.human_approval_required != self.result.human_approval_required:
+            raise ValueError("MCP result approval flag must match authenticated authorization")
 
 
 class McpGovernanceRegistry:
@@ -295,6 +313,8 @@ class McpGovernanceRegistry:
         expected = 1 if not history else history[-1].server_version + 1
         if registration.server_version != expected:
             raise ValueError(f"server_version must be contiguous; expected version {expected}")
+        if history and _parse_time(registration.registered_at) < _parse_time(history[-1].registered_at):
+            raise ValueError("new MCP server registration cannot predate the previous version")
         self._servers[key] = registration
         return registration.artifact_digest
 
@@ -343,6 +363,8 @@ class McpGovernanceRegistry:
 
     def latest_snapshot(self, institution_id: str, server_id: str) -> McpToolSnapshot:
         server = self.latest_server(institution_id, server_id)
+        if not server.approved:
+            raise ValueError("MCP server is not currently approved")
         candidates = tuple(
             item for item in self._snapshots_for_server(institution_id, server_id)
             if item.server_registration_digest == server.artifact_digest
@@ -381,6 +403,8 @@ class McpGovernanceRegistry:
         expected_tool_id = self.governed_tool_id(binding.server_id, descriptor.name)
         if binding.governed_tool_id != expected_tool_id:
             raise ValueError("governed MCP tool id does not match institution-pinned server/tool identity")
+        if _parse_time(binding.registered_at) < _parse_time(snapshot.captured_at):
+            raise ValueError("MCP tool binding cannot predate its governed tool snapshot")
         key = (binding.institution_id, binding.binding_id, binding.binding_version)
         existing = self._bindings.get(key)
         if existing is not None:
@@ -393,6 +417,8 @@ class McpGovernanceRegistry:
             raise ValueError(f"binding_version must be contiguous; expected version {expected}")
         if history and history[0].governed_tool_id != binding.governed_tool_id:
             raise ValueError("MCP binding identity cannot move to a different governed tool")
+        if history and _parse_time(binding.registered_at) < _parse_time(history[-1].registered_at):
+            raise ValueError("new MCP binding version cannot predate the previous version")
         self._bindings[key] = binding
         return binding.artifact_digest
 
@@ -518,7 +544,9 @@ class McpPolicyEnforcementPoint:
                 authenticated_authorization_digest=None,
                 identity_verified=False,
                 decision=Decision.DENY,
+                constraints=(),
                 reason_codes=(reason,),
+                human_approval_required=False,
                 execution_permitted=False,
                 execution_performed=False,
                 evaluated_at=evaluated_at,
@@ -542,7 +570,9 @@ class McpPolicyEnforcementPoint:
             authenticated_authorization_digest=authorization.artifact_digest,
             identity_verified=authorization.identity_verified,
             decision=authorization.decision,
+            constraints=authorization.authorization.constraints,
             reason_codes=authorization.authorization.reason_codes,
+            human_approval_required=authorization.authorization.human_approval_required,
             execution_permitted=authorization.authorization.policy_permits_execution,
             execution_performed=False,
             evaluated_at=evaluated_at,
