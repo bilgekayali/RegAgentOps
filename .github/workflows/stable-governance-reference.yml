@@ -42,6 +42,8 @@ jobs:
 
           schema_baseline = json.loads(Path('compatibility/v1-schema-baseline.json').read_text(encoding='utf-8'))
           assert schema_baseline['stable_since_version'] == '1.0.0'
+          schema_files = {path.name for path in Path('schemas').glob('*.schema.json')}
+          assert schema_files == set(schema_baseline['schemas']), (schema_files - set(schema_baseline['schemas']), set(schema_baseline['schemas']) - schema_files)
           for filename, discriminator in schema_baseline['schemas'].items():
               payload = json.loads((Path('schemas') / filename).read_text(encoding='utf-8'))
               assert payload['$schema'] == 'https://json-schema.org/draft/2020-12/schema'
@@ -96,6 +98,10 @@ jobs:
               'production-reference boundary evidence must bind exact release manifest',
               'stable release requires explicit independent-review confirmation',
               'v1 responsibility scope must retain the exact required non-claims',
+              'independent security review cannot predate the exact 1.0 target release',
+              'stable release baseline cannot predate its bound readiness evidence',
+              'def assert_baseline_current(',
+              'stable release baseline does not match the registered exact baseline',
           ):
               assert marker in source, marker
 
