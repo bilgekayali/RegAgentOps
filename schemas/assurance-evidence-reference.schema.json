@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RegAgentOps Assurance Evidence Reference",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["evidence_id","institution_id","scope_digest","subject_artifact_digest","artifact_type","artifact_schema_version","source_component","recorded_at","schema_version"],
+  "properties": {
+    "evidence_id": {"type":"string","minLength":1,"maxLength":256},
+    "institution_id": {"type":"string","minLength":1,"maxLength":256},
+    "scope_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "subject_artifact_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "artifact_type": {"type":"string","minLength":1,"maxLength":256},
+    "artifact_schema_version": {"type":"string","minLength":1,"maxLength":256},
+    "source_component": {"type":"string","minLength":1,"maxLength":256},
+    "recorded_at": {"type":"string","format":"date-time","pattern":"Z$"},
+    "schema_version": {"const":"regagentops.assurance-evidence-reference.v1"}
+  }
+}
