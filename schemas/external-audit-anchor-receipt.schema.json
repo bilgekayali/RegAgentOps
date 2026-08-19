@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://regagentops.dev/schemas/external-audit-anchor-receipt.schema.json",
+  "title": "ExternalAuditAnchorReceipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["institution_id", "tenant_id", "batch_digest", "provider_id", "anchor_id", "provider_receipt_digest", "anchored_at", "schema_version"],
+  "properties": {
+    "institution_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "tenant_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "batch_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "provider_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "anchor_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "provider_receipt_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "anchored_at": {"type": "string", "minLength": 2, "maxLength": 64, "pattern": "Z$"},
+    "schema_version": {"const": "regagentops.external-audit-anchor-receipt.v1"}
+  }
+}
