@@ -8,17 +8,17 @@ RegAgentOps is an open-source reference architecture for deciding, constraining,
 
 RegAgentOps answers a narrow question:
 
-> Under which identity, purpose, policy, data, tool, delegated-authority, human-approval, and governed MCP conditions may an AI agent continue toward a specific enterprise action, and how can that decision be evidenced later?
+> Under which identity, purpose, policy, data, tool, delegated-authority, human-approval, governed MCP, emergency-stop, and one-time execution conditions may an AI agent continue toward a specific enterprise action, and how can that decision and represented result be evidenced later?
 
-The project is designed for regulated and high-assurance environments such as financial institutions. It is **not** an autonomous agent framework, credential broker, generic MCP proxy, identity provider, workflow/BPM system, or compliance-certification product.
+The project is designed for regulated and high-assurance environments such as financial institutions. It is **not** an autonomous agent framework, credential broker, generic MCP proxy, identity provider, workflow/BPM system, production executor, or compliance-certification product.
 
-Current version: **v0.4.0 — MCP Governance Adapter**.
+Current version: **v0.5.0 — Signed Execution Receipts**.
 
 ## Purpose
 
-Agentic systems can request tools that read enterprise data, call APIs, modify records, or trigger business processes. RegAgentOps places deterministic identity, policy, delegated-authority, human-approval, and MCP-governance controls before any future enforcement/execution layer.
+Agentic systems can request tools that read enterprise data, call APIs, modify records, or trigger business processes. RegAgentOps places deterministic identity, policy, delegated-authority, human-approval, MCP-governance, one-time execution-lease, emergency-stop, and signed-evidence controls before and around any external execution layer.
 
-The v0.4 core remains deliberately bounded and offline. It does not discover identity-provider metadata, fetch remote JWKS, connect to MCP servers, issue production credentials, discover tools autonomously, or execute requested actions.
+The v0.5 core remains deliberately bounded and offline. It does not discover identity-provider metadata, fetch remote JWKS, connect to MCP servers, issue production credentials, discover tools autonomously, or invoke requested actions.
 
 ## Control model
 
@@ -56,8 +56,22 @@ Explicit governed tool binding
                                   v
                          ApprovalResolution
                                   |
+                         current MCP state
+                         emergency-stop state
+                                  |
                                   v
-                       future execution layer
+                       one-time ExecutionLease
+                                  |
+                       atomic lease consumption
+                                  |
+                                  v
+                       external tool executor
+                                  |
+                                  v
+                    ToolExecutionReceipt
+                                  |
+                                  v
+                 SignedToolExecutionReceipt
 ```
 
 Policy precedence remains deterministic:
@@ -66,65 +80,66 @@ Policy precedence remains deterministic:
 
 No matching rule means **DENY**. Identity failure also means **DENY**. Human approval never overrides either condition.
 
+## v0.5 signed execution receipt boundary
+
+v0.5 introduces a non-invoking bridge from governed continuation evidence to an external executor.
+
+### Exact execution binding
+
+`ExecutionLease` binds the exact request digest, authenticated authorization digest, nested policy-decision digest, MCP policy-enforcement result, MCP registry snapshot, emergency-stop state, and—when required—the exact approval requirement and approval resolution.
+
+A lease is issued only from a verified non-DENY MCP policy outcome whose governed MCP evidence is still current. Approval-required requests cannot produce a lease without the exact request/authorization-bound approval chain.
+
+### One-time lease and emergency stop
+
+Execution leases are capped at 120 seconds. Redemption occurs through an append-only SQLite ledger keyed by lease digest, so the same lease cannot be consumed twice.
+
+Emergency-stop state is institution-scoped, append-only and versioned. A halted state blocks lease issuance and redemption. The lease binds the exact non-halted state; any stop-state change makes an unconsumed lease stale. MCP governance drift likewise invalidates the lease before redemption.
+
+### Signed result evidence
+
+`ToolExecutionReceipt` binds request/tool/action/resource/input evidence, lease and one-time consumption, MCP policy result, authenticated authorization, policy-decision digest, optional approval evidence, emergency-stop state, SHA-256 result digest, explicit `SUCCEEDED`/`FAILED` outcome, timestamps and executor identity.
+
+`SignedToolExecutionReceipt` uses a domain-separated Ed25519 signing document and institution-owned `ExecutionTrustBundle` keys. Receipt/result modification breaks verification.
+
+The core itself does not dispatch the tool. See [docs/EXECUTION_RECEIPTS.md](docs/EXECUTION_RECEIPTS.md).
+
 ## v0.4 MCP governance boundary
 
-v0.4 adds an offline governance adapter around MCP tool metadata. The core never performs MCP discovery or network connection. Operators or surrounding applications supply tool snapshots explicitly.
+v0.4 controls remain active beneath the execution boundary. MCP metadata is caller-supplied and offline; approved servers are institution-scoped and identity-pinned; tool snapshots are bounded to 128 tools; descriptions/annotations are untrusted evidence; and only explicit current bindings can populate the existing `ToolRegistry`.
 
-### Approved server identity
-
-`McpServerRegistration` gives each approved MCP server an institution-owned `server_id`, expected server-reported name, transport profile, explicit identity-pin digest, metadata digest, approval state, and contiguous version history.
-
-The server-reported name is metadata rather than the global identity. Governed MCP tool IDs are namespaced as `mcp:<server_id>:<tool_name>` so same-named tools on different approved servers cannot silently collide.
-
-### Bounded tool snapshots
-
-`McpToolSnapshot` binds caller-supplied tool metadata to an exact approved server-registration digest and observed server-identity pin. The reference boundary permits at most 128 tools per snapshot, rejects duplicate tool names within a server, and fails closed when different snapshots conflict at the same semantic latest timestamp.
-
-### Untrusted metadata
-
-Tool descriptions and MCP annotations are represented only through evidence digests. They never determine production eligibility, allowed data classifications, policy effect, risk tier, approval requirement, or execution permission.
-
-`McpToolBinding` is the explicit institution-owned mapping from an exact current MCP tool descriptor to the existing RegAgentOps `ToolActionDescriptor` boundary. A new tool snapshot or server-registration version makes an older current binding stale until an explicit re-binding is registered.
-
-### Policy enforcement
-
-`McpPolicyEnforcementPoint` derives a `ToolRegistry` only from current explicit MCP bindings and then reuses the existing `AuthenticatedPolicyEngine`. It creates no second policy language.
-
-If the authenticated policy decision requires human approval, the exact authorization object remains available to the existing v0.3 `ApprovalGate`. This preserves requester/approver separation, delegated authority, signature verification, expiry, and one-time replay controls.
-
-`McpPolicyEnforcementResult.execution_performed` is always `false` in v0.4. A positive continuation decision is governance evidence only; it is not a tool execution or execution receipt.
-
-See [docs/MCP_GOVERNANCE.md](docs/MCP_GOVERNANCE.md).
+`McpPolicyEnforcementPoint` reuses `AuthenticatedPolicyEngine`, creates no parallel policy language, and never executes a tool. See [docs/MCP_GOVERNANCE.md](docs/MCP_GOVERNANCE.md).
 
 ## v0.3 approval boundary
 
-v0.3 controls remain active after authenticated policy evaluation.
-
-An approval requirement is issued when policy returns `REQUIRE_HUMAN_APPROVAL` or when the configured escalation policy requires approval for high/critical risk. Requester/approver separation, bounded expiry, Ed25519 signatures, delegated authority, and requirement-level replay prevention remain unchanged for MCP-governed requests.
+An approval requirement is issued when policy returns `REQUIRE_HUMAN_APPROVAL` or when configured escalation requires approval for high/critical risk. Requester/approver separation, bounded expiry, Ed25519 signatures, delegated authority, and requirement-level one-time replay prevention remain unchanged for execution-bound requests.
 
 See [docs/APPROVALS.md](docs/APPROVALS.md).
 
 ## Identity boundary
 
-v0.2 controls remain active. OIDC verification is offline against operator-supplied pinned JWKS, with issuer/client/audience/algorithm/nonce/subject/time checks and dynamic key-selection header rejection. Workload identity is short-lived and institution-signed. The combined authenticated context is itself domain-separated and signed before policy use.
+v0.2 controls remain active. OIDC verification is offline against operator-supplied pinned JWKS, with issuer/client/audience/algorithm/nonce/subject/time checks and dynamic key-selection header rejection. Workload identity is short-lived and institution-signed. The combined authenticated context is domain-separated and signed before policy use.
 
 See [docs/IDENTITY.md](docs/IDENTITY.md).
 
 ## Safety baseline
 
-v0.4 remains governance-only and simulation-first:
+v0.5 remains governance/evidence focused and simulation-first:
 
 - default deny;
-- no production tool execution in the RegAgentOps runtime;
+- no production tool invocation in the RegAgentOps core;
 - no arbitrary command or shell execution;
 - no embedded production credentials, bearer tokens, or long-lived private keys;
 - no autonomous target, resource, server, or MCP-tool discovery;
-- no network-capable MCP connection in authorization, identity, approval, or MCP-governance modules;
+- no network-capable MCP connection in authorization, identity, approval, MCP-governance, or execution modules;
 - no online OIDC discovery or JWKS retrieval;
 - unsigned authenticated contexts are rejected;
 - MCP annotations cannot weaken or expand authorization policy;
 - human approval cannot override policy or identity denial;
-- approval continuation is not execution permission from a runtime executor;
+- execution leases are short-lived and one-time;
+- emergency-stop and MCP-governance drift invalidate unconsumed leases;
+- signed receipts carry result digests, not raw tool output;
+- a valid receipt is evidence of represented bindings/signature, not independent proof of external runtime truthfulness or correctness;
 - no regulatory or standards-certification claim.
 
 ## Quick start
@@ -157,15 +172,17 @@ src/regagentops/
   approval_replay.py                     one-time requirement redemption ledger
   approval_engine.py                     escalation and approval resolution
   mcp.py                                 governed MCP registry + offline PEP adapter
+  execution.py                           one-time leases + signed execution receipts
   cli.py                                 offline synthetic demo
 
 schemas/
-  ... v0.1/v0.2/v0.3 contracts ...
-  mcp-server-registration.schema.json
-  mcp-tool-descriptor.schema.json
-  mcp-tool-snapshot.schema.json
-  mcp-tool-binding.schema.json
-  mcp-policy-enforcement-result.schema.json
+  ... v0.1-v0.4 contracts ...
+  emergency-stop-state.schema.json
+  execution-lease.schema.json
+  execution-lease-consumption.schema.json
+  execution-trust-bundle.schema.json
+  tool-execution-receipt.schema.json
+  signed-tool-execution-receipt.schema.json
 
 tests/
   test_policy.py
@@ -174,19 +191,21 @@ tests/
   test_registered_identity.py
   test_approvals.py
   test_mcp.py
+  test_execution.py
 
 docs/
   ARCHITECTURE.md
   IDENTITY.md
   APPROVALS.md
   MCP_GOVERNANCE.md
+  EXECUTION_RECEIPTS.md
   THREAT_MODEL.md
   ROADMAP.md
 ```
 
 ## CI boundary
 
-GitHub Actions tests Python 3.11, 3.12 and 3.13, compiles the package, and performs clean-wheel smoke testing. Generic CI rejects network/process imports across authorization, identity, approval, and MCP-governance core modules. The MCP core is additionally guarded against autonomous discovery/network call markers.
+GitHub Actions tests Python 3.11, 3.12 and 3.13, compiles the package, and performs clean-wheel smoke testing. Generic CI rejects network/process capability imports across the governed core. Dedicated identity, human-approval, MCP-governance and signed-execution-receipt workflows pin their respective contracts and invariants.
 
 ## Standards and ecosystem references
 
@@ -210,11 +229,11 @@ See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Security
 
-See [SECURITY.md](SECURITY.md), [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md), [docs/IDENTITY.md](docs/IDENTITY.md), [docs/APPROVALS.md](docs/APPROVALS.md), and [docs/MCP_GOVERNANCE.md](docs/MCP_GOVERNANCE.md).
+See [SECURITY.md](SECURITY.md), [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md), [docs/IDENTITY.md](docs/IDENTITY.md), [docs/APPROVALS.md](docs/APPROVALS.md), [docs/MCP_GOVERNANCE.md](docs/MCP_GOVERNANCE.md), and [docs/EXECUTION_RECEIPTS.md](docs/EXECUTION_RECEIPTS.md).
 
 ## Explicit non-claims
 
-RegAgentOps v0.4 does **not** by itself establish MCP server authenticity from supplied metadata, tool implementation safety/correctness, runtime enforcement by an external MCP client/server, successful execution, regulatory compliance, legal applicability, certification, supervisory acceptance, or production fitness.
+RegAgentOps v0.5 does **not** by itself prove external tool implementation safety/correctness, truthfulness or completeness of represented result bytes, runtime enforcement after lease redemption, MCP server behavior, regulatory compliance, legal applicability, certification, supervisory acceptance, or production fitness.
 
 ## License
 
