@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://regagentops.example/schemas/stable-compatibility-policy.schema.json",
+  "title": "StableCompatibilityPolicy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "policy_id",
+    "stable_since_version",
+    "semver_required",
+    "breaking_change_requires_major",
+    "python_public_symbol_removal_requires_major",
+    "cli_command_removal_requires_major",
+    "json_schema_discriminator_change_requires_major",
+    "json_required_field_removal_requires_major",
+    "json_enum_value_removal_requires_major",
+    "unknown_json_fields_rejected",
+    "deprecation_min_minor_releases",
+    "declared_at",
+    "schema_version"
+  ],
+  "properties": {
+    "policy_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "stable_since_version": {"const": "1.0.0"},
+    "semver_required": {"const": true},
+    "breaking_change_requires_major": {"const": true},
+    "python_public_symbol_removal_requires_major": {"const": true},
+    "cli_command_removal_requires_major": {"const": true},
+    "json_schema_discriminator_change_requires_major": {"const": true},
+    "json_required_field_removal_requires_major": {"const": true},
+    "json_enum_value_removal_requires_major": {"const": true},
+    "unknown_json_fields_rejected": {"const": true},
+    "deprecation_min_minor_releases": {"type": "integer", "minimum": 2, "maximum": 12},
+    "declared_at": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"},
+    "schema_version": {"const": "regagentops.stable-compatibility-policy.v1"}
+  }
+}
