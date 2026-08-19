@@ -24,9 +24,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install package
         run: python -m pip install -e .
+      - name: Compile package
+        run: python -m compileall -q src
       - name: Run tests
         run: python -m unittest discover -s tests -v
-      - name: Enforce offline authorization identity and approval boundary
+      - name: Enforce offline authorization identity approval and MCP boundary
         shell: bash
         run: |
           python - <<'PY'
@@ -51,6 +53,7 @@ jobs:
               Path("src/regagentops/approval_signature.py"),
               Path("src/regagentops/approval_replay.py"),
               Path("src/regagentops/approval_engine.py"),
+              Path("src/regagentops/mcp.py"),
           ]
           for path in core_files:
               source = path.read_text(encoding="utf-8")
@@ -68,6 +71,10 @@ jobs:
           oidc_source = Path("src/regagentops/oidc.py").read_text(encoding="utf-8")
           if "PyJWKClient" in oidc_source:
               raise SystemExit("OIDC verifier must not use network-capable PyJWKClient")
+          mcp_source = Path("src/regagentops/mcp.py").read_text(encoding="utf-8")
+          for marker in ("list_tools(", "discover_tools(", "connect(", "requests.", "httpx."):
+              if marker in mcp_source:
+                  raise SystemExit(f"MCP core must not contain autonomous discovery/network marker: {marker}")
           PY
 
   package-smoke:
@@ -97,9 +104,11 @@ jobs:
           import regagentops.authenticated_identity_signature
           import regagentops.authenticated_policy
           import regagentops.identity_binding
+          import regagentops.mcp
           import regagentops.oidc
           import regagentops.workload_identity
-          assert regagentops.__version__ == version('regagentops')
+          assert regagentops.__version__ == version('regagentops') == '0.4.0'
+          assert regagentops.mcp.MCP_MAX_TOOLS_PER_SNAPSHOT == 128
           PY
           /tmp/regagentops-smoke/bin/regagentops demo-decision > /tmp/regagentops-decision.json
           /tmp/regagentops-smoke/bin/python - <<'PY'

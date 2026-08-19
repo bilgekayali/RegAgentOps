@@ -38,11 +38,16 @@ RegAgentOps evolves from an offline authorization core into a production-referen
 
 ## v0.4.0 — MCP Governance Adapter
 
-- [ ] bounded MCP tool-registry ingestion;
-- [ ] server/tool identity pinning;
-- [ ] untrusted tool-annotation handling;
-- [ ] policy enforcement point interface;
-- [ ] no autonomous discovery outside approved MCP servers.
+- [x] bounded caller-supplied MCP tool-registry ingestion with a 128-tool snapshot ceiling;
+- [x] institution-scoped, versioned MCP server approval and server-identity pinning;
+- [x] server-scoped MCP tool identity mapped to collision-safe governed tool IDs;
+- [x] untrusted tool descriptions/annotations represented only as evidence digests and never as policy authority;
+- [x] exact current snapshot and explicit institution-owned tool-binding state;
+- [x] authenticated policy-enforcement-point adapter reusing the existing authorization engine;
+- [x] v0.3 human-approval continuation preserved for MCP requests requiring approval;
+- [x] default-deny handling for stale/unapproved/changed/unknown MCP state;
+- [x] no autonomous MCP discovery or network capability in the governance core;
+- [x] strict MCP JSON contracts, adversarial tests, Python 3.11/3.12/3.13 CI and clean-wheel smoke.
 
 ## v0.5.0 — Signed Execution Receipts
 

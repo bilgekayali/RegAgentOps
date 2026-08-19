@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RegAgentOps MCP Tool Descriptor",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["institution_id","server_id","server_registration_digest","name","input_schema_digest","output_schema_digest","description_digest","annotations_digest","raw_metadata_digest","schema_version"],
+  "properties": {
+    "institution_id": {"type":"string","minLength":1,"maxLength":256},
+    "server_id": {"type":"string","minLength":1,"maxLength":64},
+    "server_registration_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "name": {"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_.-]+$"},
+    "input_schema_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "output_schema_digest": {"oneOf":[{"type":"string","pattern":"^[0-9a-f]{64}$"},{"type":"null"}]},
+    "description_digest": {"oneOf":[{"type":"string","pattern":"^[0-9a-f]{64}$"},{"type":"null"}]},
+    "annotations_digest": {"oneOf":[{"type":"string","pattern":"^[0-9a-f]{64}$"},{"type":"null"}]},
+    "raw_metadata_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "schema_version": {"const":"regagentops.mcp-tool-descriptor.v1"}
+  }
+}
