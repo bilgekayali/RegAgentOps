@@ -136,15 +136,13 @@ def render_postgres_rls_sql(policy: PostgresRlsPolicy) -> str:
         f"{policy.institution_column} = current_setting('{policy.institution_setting}', true) "
         f"AND {policy.tenant_column} = current_setting('{policy.tenant_setting}', true)"
     )
-    return "\n".join(
-        (
-            f"ALTER TABLE {policy.table_name} ENABLE ROW LEVEL SECURITY;",
-            f"ALTER TABLE {policy.table_name} FORCE ROW LEVEL SECURITY;",
-            f"CREATE POLICY {policy.policy_name} ON {policy.table_name}",
-            f"USING ({predicate})",
-            f"WITH CHECK ({predicate});",
-        )
-    )
+    return "\n".join((
+        f"ALTER TABLE {policy.table_name} ENABLE ROW LEVEL SECURITY;",
+        f"ALTER TABLE {policy.table_name} FORCE ROW LEVEL SECURITY;",
+        f"CREATE POLICY {policy.policy_name} ON {policy.table_name}",
+        f"USING ({predicate})",
+        f"WITH CHECK ({predicate});",
+    ))
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,8 +179,8 @@ class TenantIsolationRegistry:
         self._profiles: dict[tuple[str, str, int], TenantIsolationProfile] = {}
 
     def register_policy(self, policy: PostgresRlsPolicy) -> str:
-        key = (policy.institution_id, policy.policy_id, policy.policy_version)
-        existing = self._policies.get(key)
+        identity = (policy.institution_id, policy.policy_id, policy.policy_version)
+        existing = self._policies.get(identity)
         if existing is not None:
             if existing.artifact_digest != policy.artifact_digest:
                 raise ValueError("RLS policy identity/version already exists with different content")
@@ -191,24 +189,16 @@ class TenantIsolationRegistry:
         expected = 1 if not history else history[-1].policy_version + 1
         if policy.policy_version != expected:
             raise ValueError(f"RLS policy_version must be contiguous; expected version {expected}")
-        if history and _parse_time("registered_at", policy.registered_at) < _parse_time(
-            "previous registered_at", history[-1].registered_at
-        ):
+        if history and _parse_time("registered_at", policy.registered_at) < _parse_time("previous registered_at", history[-1].registered_at):
             raise ValueError("new RLS policy cannot predate the previous version")
-        self._policies[key] = policy
+        self._policies[identity] = policy
         return policy.artifact_digest
 
     def policy_history(self, institution_id: str, policy_id: str) -> tuple[PostgresRlsPolicy, ...]:
-        return tuple(
-            sorted(
-                (
-                    policy
-                    for (scope, candidate_id, _), policy in self._policies.items()
-                    if scope == institution_id and candidate_id == policy_id
-                ),
-                key=lambda policy: policy.policy_version,
-            )
-        )
+        return tuple(sorted(
+            (policy for (scope, candidate_id, _), policy in self._policies.items() if scope == institution_id and candidate_id == policy_id),
+            key=lambda policy: policy.policy_version,
+        ))
 
     def _policy_by_digest(self, institution_id: str, digest: str) -> PostgresRlsPolicy:
         for (scope, _, _), policy in self._policies.items():
@@ -219,8 +209,8 @@ class TenantIsolationRegistry:
     def register_profile(self, profile: TenantIsolationProfile) -> str:
         for digest in profile.rls_policy_digests:
             self._policy_by_digest(profile.institution_id, digest)
-        key = (profile.institution_id, profile.tenant_id, profile.profile_version)
-        existing = self._profiles.get(key)
+        identity = (profile.institution_id, profile.tenant_id, profile.profile_version)
+        existing = self._profiles.get(identity)
         if existing is not None:
             if existing.artifact_digest != profile.artifact_digest:
                 raise ValueError("tenant isolation profile identity/version already exists with different content")
@@ -229,24 +219,16 @@ class TenantIsolationRegistry:
         expected = 1 if not history else history[-1].profile_version + 1
         if profile.profile_version != expected:
             raise ValueError(f"tenant isolation profile_version must be contiguous; expected version {expected}")
-        if history and _parse_time("registered_at", profile.registered_at) < _parse_time(
-            "previous registered_at", history[-1].registered_at
-        ):
+        if history and _parse_time("registered_at", profile.registered_at) < _parse_time("previous registered_at", history[-1].registered_at):
             raise ValueError("new tenant isolation profile cannot predate the previous version")
-        self._profiles[key] = profile
+        self._profiles[identity] = profile
         return profile.artifact_digest
 
     def profile_history(self, institution_id: str, tenant_id: str) -> tuple[TenantIsolationProfile, ...]:
-        return tuple(
-            sorted(
-                (
-                    profile
-                    for (scope, tenant, _), profile in self._profiles.items()
-                    if scope == institution_id and tenant == tenant_id
-                ),
-                key=lambda profile: profile.profile_version,
-            )
-        )
+        return tuple(sorted(
+            (profile for (scope, tenant, _), profile in self._profiles.items() if scope == institution_id and tenant == tenant_id),
+            key=lambda profile: profile.profile_version,
+        ))
 
     def current_profile(self, institution_id: str, tenant_id: str) -> TenantIsolationProfile:
         history = self.profile_history(institution_id, tenant_id)
@@ -256,14 +238,12 @@ class TenantIsolationRegistry:
 
     def snapshot_digest(self, institution_id: str, tenant_id: str) -> str:
         profile = self.current_profile(institution_id, tenant_id)
-        return digest_artifact(
-            {
-                "institution_id": institution_id,
-                "tenant_id": tenant_id,
-                "profile_digest": profile.artifact_digest,
-                "rls_policy_digests": profile.rls_policy_digests,
-            }
-        )
+        return digest_artifact({
+            "institution_id": institution_id,
+            "tenant_id": tenant_id,
+            "profile_digest": profile.artifact_digest,
+            "rls_policy_digests": profile.rls_policy_digests,
+        })
 
 
 @dataclass(frozen=True, slots=True)
@@ -369,9 +349,7 @@ class InstitutionCryptoKeyRegistry:
         expected = 1 if not history else history[-1].key_version + 1
         if key.key_version != expected:
             raise ValueError(f"crypto key_version must be contiguous; expected version {expected}")
-        if history and _parse_time("registered_at", key.registered_at) < _parse_time(
-            "previous registered_at", history[-1].registered_at
-        ):
+        if history and _parse_time("registered_at", key.registered_at) < _parse_time("previous registered_at", history[-1].registered_at):
             raise ValueError("new crypto key reference cannot predate the previous version")
         if any(previous.key_id == key.key_id for previous in history):
             raise ValueError("rotated key versions must use distinct key_id values")
@@ -388,22 +366,11 @@ class InstitutionCryptoKeyRegistry:
         self._states[(key.institution_id, key.tenant_id, key.artifact_digest, 1)] = initial
         return key.artifact_digest
 
-    def history(
-        self,
-        institution_id: str,
-        tenant_id: str,
-        purpose: CryptoKeyPurpose,
-    ) -> tuple[InstitutionCryptoKeyReference, ...]:
-        return tuple(
-            sorted(
-                (
-                    key
-                    for (scope, tenant, candidate_purpose, _), key in self._keys.items()
-                    if scope == institution_id and tenant == tenant_id and candidate_purpose is purpose
-                ),
-                key=lambda key: key.key_version,
-            )
-        )
+    def history(self, institution_id: str, tenant_id: str, purpose: CryptoKeyPurpose) -> tuple[InstitutionCryptoKeyReference, ...]:
+        return tuple(sorted(
+            (key for (scope, tenant, candidate_purpose, _), key in self._keys.items() if scope == institution_id and tenant == tenant_id and candidate_purpose is purpose),
+            key=lambda key: key.key_version,
+        ))
 
     def by_digest(self, institution_id: str, tenant_id: str, digest: str) -> InstitutionCryptoKeyReference:
         for (scope, tenant, _, _), key in self._keys.items():
@@ -412,16 +379,10 @@ class InstitutionCryptoKeyRegistry:
         raise ValueError("unknown tenant crypto key reference digest")
 
     def lifecycle_history(self, key: InstitutionCryptoKeyReference) -> tuple[CryptoKeyLifecycleState, ...]:
-        return tuple(
-            sorted(
-                (
-                    state
-                    for (scope, tenant, digest, _), state in self._states.items()
-                    if scope == key.institution_id and tenant == key.tenant_id and digest == key.artifact_digest
-                ),
-                key=lambda state: state.state_version,
-            )
-        )
+        return tuple(sorted(
+            (state for (scope, tenant, digest, _), state in self._states.items() if scope == key.institution_id and tenant == key.tenant_id and digest == key.artifact_digest),
+            key=lambda state: state.state_version,
+        ))
 
     def register_state(self, state: CryptoKeyLifecycleState) -> str:
         key = self.by_digest(state.institution_id, state.tenant_id, state.key_reference_digest)
@@ -446,27 +407,15 @@ class InstitutionCryptoKeyRegistry:
 
     def status_at(self, key: InstitutionCryptoKeyReference, *, at: str) -> CryptoKeyStatus:
         at_dt = _parse_time("at", at)
-        effective = [
-            state
-            for state in self.lifecycle_history(key)
-            if _parse_time("effective_at", state.effective_at) <= at_dt
-        ]
+        effective = [state for state in self.lifecycle_history(key) if _parse_time("effective_at", state.effective_at) <= at_dt]
         if not effective:
             raise ValueError("key lifecycle is not yet effective at requested time")
         return effective[-1].status
 
-    def current_active(
-        self,
-        institution_id: str,
-        tenant_id: str,
-        purpose: CryptoKeyPurpose,
-        *,
-        at: str,
-    ) -> InstitutionCryptoKeyReference:
+    def current_active(self, institution_id: str, tenant_id: str, purpose: CryptoKeyPurpose, *, at: str) -> InstitutionCryptoKeyReference:
         at_dt = _parse_time("at", at)
         candidates = [
-            key
-            for key in self.history(institution_id, tenant_id, purpose)
+            key for key in self.history(institution_id, tenant_id, purpose)
             if self.status_at(key, at=at) is CryptoKeyStatus.ACTIVE
             and _parse_time("not_before", key.not_before) <= at_dt < _parse_time("not_after", key.not_after)
         ]
@@ -477,12 +426,10 @@ class InstitutionCryptoKeyRegistry:
     def assert_new_operation_allowed(self, key: InstitutionCryptoKeyReference, *, artifact_time: str, now: str) -> None:
         artifact_dt = _parse_time("artifact_time", artifact_time)
         now_dt = _parse_time("now", now)
-        if artifact_dt > now_dt:
-            raise ValueError("cryptographic artifact time cannot be in the future")
+        if artifact_dt != now_dt:
+            raise ValueError("new cryptographic artifact time must equal current operation time")
         if self.status_at(key, at=artifact_time) is not CryptoKeyStatus.ACTIVE:
-            raise ValueError("key was not active at cryptographic artifact time")
-        if self.status_at(key, at=now) is not CryptoKeyStatus.ACTIVE:
-            raise ValueError("new cryptographic operation requires the key to be currently active")
+            raise ValueError("key was not active at cryptographic artifact time; new operations require a currently active key")
         if not (_parse_time("not_before", key.not_before) <= artifact_dt < _parse_time("not_after", key.not_after)):
             raise ValueError("key is outside its validity interval at cryptographic artifact time")
 
@@ -504,10 +451,7 @@ class ConfigurationChangeRequest:
     schema_version: str = "regagentops.configuration-change-request.v1"
 
     def __post_init__(self) -> None:
-        for name in (
-            "change_id", "institution_id", "tenant_id", "object_type", "object_id",
-            "requested_by_human_id", "schema_version",
-        ):
+        for name in ("change_id", "institution_id", "tenant_id", "object_type", "object_id", "requested_by_human_id", "schema_version"):
             _require_text(name, getattr(self, name))
         _require_positive_int("sequence", self.sequence)
         _require_digest("previous_configuration_digest", self.previous_configuration_digest, optional=True)
@@ -566,15 +510,10 @@ class ConfigurationChangeSigner(Protocol):
     key_id: str
     key_version: int
     algorithm: str
-
     def sign(self, message: bytes) -> bytes: ...
 
 
-def configuration_change_signing_document(
-    request: ConfigurationChangeRequest,
-    *, previous_change_digest: str | None, key_reference_digest: str,
-    key_id: str, key_version: int, algorithm: str, signed_at: str,
-) -> dict[str, object]:
+def configuration_change_signing_document(request: ConfigurationChangeRequest, *, previous_change_digest: str | None, key_reference_digest: str, key_id: str, key_version: int, algorithm: str, signed_at: str) -> dict[str, object]:
     return {
         "purpose": "regagentops.configuration-change.v1",
         "institution_id": request.institution_id,
@@ -590,15 +529,7 @@ def configuration_change_signing_document(
     }
 
 
-def sign_configuration_change(
-    request: ConfigurationChangeRequest,
-    *, previous_change_digest: str | None,
-    key_reference: InstitutionCryptoKeyReference,
-    key_registry: InstitutionCryptoKeyRegistry,
-    signer: ConfigurationChangeSigner,
-    signed_at: str,
-    now: str,
-) -> SignedConfigurationChange:
+def sign_configuration_change(request: ConfigurationChangeRequest, *, previous_change_digest: str | None, key_reference: InstitutionCryptoKeyReference, key_registry: InstitutionCryptoKeyRegistry, signer: ConfigurationChangeSigner, signed_at: str, now: str) -> SignedConfigurationChange:
     registered = key_registry.by_digest(request.institution_id, request.tenant_id, key_reference.artifact_digest)
     if registered.artifact_digest != key_reference.artifact_digest:
         raise ValueError("configuration signing key reference mismatch")
@@ -606,11 +537,7 @@ def sign_configuration_change(
         raise ValueError("configuration changes require a configuration-signing key")
     if signer.institution_id != request.institution_id or signer.tenant_id != request.tenant_id:
         raise ValueError("configuration signer tenant scope mismatch")
-    if (
-        signer.key_id != key_reference.key_id
-        or signer.key_version != key_reference.key_version
-        or signer.algorithm != CryptoAlgorithm.ED25519.value
-    ):
+    if signer.key_id != key_reference.key_id or signer.key_version != key_reference.key_version or signer.algorithm != CryptoAlgorithm.ED25519.value:
         raise ValueError("configuration signer does not match exact key reference")
     signed_dt = _parse_time("signed_at", signed_at)
     if signed_dt < _parse_time("requested_at", request.requested_at) or signed_dt > _parse_time("effective_at", request.effective_at):
@@ -641,11 +568,7 @@ def sign_configuration_change(
     )
 
 
-def verify_signed_configuration_change(
-    signed: SignedConfigurationChange,
-    *, key_registry: InstitutionCryptoKeyRegistry,
-    now: str,
-) -> ConfigurationChangeRequest:
+def verify_signed_configuration_change(signed: SignedConfigurationChange, *, key_registry: InstitutionCryptoKeyRegistry, now: str) -> ConfigurationChangeRequest:
     now_dt = _parse_time("now", now)
     signed_dt = _parse_time("signed_at", signed.signed_at)
     if signed_dt > now_dt:
@@ -688,15 +611,10 @@ class ConfigurationChangeRegistry:
         self._latest_object_digest: dict[tuple[str, str, str, str], str] = {}
 
     def history(self, institution_id: str, tenant_id: str) -> tuple[SignedConfigurationChange, ...]:
-        return tuple(
-            sorted(
-                (
-                    change for (scope, tenant, _), change in self._changes.items()
-                    if scope == institution_id and tenant == tenant_id
-                ),
-                key=lambda change: change.request.sequence,
-            )
-        )
+        return tuple(sorted(
+            (change for (scope, tenant, _), change in self._changes.items() if scope == institution_id and tenant == tenant_id),
+            key=lambda change: change.request.sequence,
+        ))
 
     def append(self, signed: SignedConfigurationChange, *, key_registry: InstitutionCryptoKeyRegistry, now: str) -> str:
         request = signed.request
@@ -770,7 +688,6 @@ class TenantEvidenceEncryptor(Protocol):
     key_id: str
     key_version: int
     algorithm: str
-
     def encrypt(self, nonce: bytes, plaintext: bytes, aad: bytes) -> bytes: ...
 
 
@@ -780,14 +697,10 @@ class TenantEvidenceDecryptor(Protocol):
     key_id: str
     key_version: int
     algorithm: str
-
     def decrypt(self, nonce: bytes, ciphertext: bytes, aad: bytes) -> bytes: ...
 
 
-def encrypted_evidence_aad_document(
-    *, envelope_id: str, institution_id: str, tenant_id: str,
-    key_reference_digest: str, subject_artifact_digest: str,
-) -> dict[str, str]:
+def encrypted_evidence_aad_document(*, envelope_id: str, institution_id: str, tenant_id: str, key_reference_digest: str, subject_artifact_digest: str) -> dict[str, str]:
     return {
         "purpose": "regagentops.tenant-encrypted-governance-evidence.v1",
         "envelope_id": envelope_id,
@@ -798,16 +711,7 @@ def encrypted_evidence_aad_document(
     }
 
 
-def encrypt_governance_evidence(
-    plaintext: bytes,
-    *, envelope_id: str, institution_id: str, tenant_id: str,
-    subject_artifact_digest: str,
-    key_reference: InstitutionCryptoKeyReference,
-    key_registry: InstitutionCryptoKeyRegistry,
-    encryptor: TenantEvidenceEncryptor,
-    encrypted_at: str,
-    now: str,
-) -> EncryptedGovernanceEvidence:
+def encrypt_governance_evidence(plaintext: bytes, *, envelope_id: str, institution_id: str, tenant_id: str, subject_artifact_digest: str, key_reference: InstitutionCryptoKeyReference, key_registry: InstitutionCryptoKeyRegistry, encryptor: TenantEvidenceEncryptor, encrypted_at: str, now: str) -> EncryptedGovernanceEvidence:
     if not isinstance(plaintext, bytes) or not plaintext:
         raise ValueError("governance evidence plaintext must be non-empty bytes")
     _require_digest("subject_artifact_digest", subject_artifact_digest)
@@ -817,13 +721,7 @@ def encrypt_governance_evidence(
     if key_reference.purpose is not CryptoKeyPurpose.EVIDENCE_ENCRYPTION:
         raise ValueError("governance evidence requires an evidence-encryption key")
     key_registry.assert_new_operation_allowed(key_reference, artifact_time=encrypted_at, now=now)
-    if (
-        encryptor.institution_id != institution_id
-        or encryptor.tenant_id != tenant_id
-        or encryptor.key_id != key_reference.key_id
-        or encryptor.key_version != key_reference.key_version
-        or encryptor.algorithm != CryptoAlgorithm.AES_256_GCM.value
-    ):
+    if encryptor.institution_id != institution_id or encryptor.tenant_id != tenant_id or encryptor.key_id != key_reference.key_id or encryptor.key_version != key_reference.key_version or encryptor.algorithm != CryptoAlgorithm.AES_256_GCM.value:
         raise ValueError("evidence encryptor does not match exact tenant key reference")
     selected_nonce = secrets.token_bytes(12)
     aad_document = encrypted_evidence_aad_document(
@@ -854,12 +752,7 @@ def encrypt_governance_evidence(
     )
 
 
-def decrypt_and_verify_governance_evidence(
-    envelope: EncryptedGovernanceEvidence,
-    *, key_registry: InstitutionCryptoKeyRegistry,
-    decryptor: TenantEvidenceDecryptor,
-    now: str,
-) -> bytes:
+def decrypt_and_verify_governance_evidence(envelope: EncryptedGovernanceEvidence, *, key_registry: InstitutionCryptoKeyRegistry, decryptor: TenantEvidenceDecryptor, now: str) -> bytes:
     now_dt = _parse_time("now", now)
     encrypted_dt = _parse_time("encrypted_at", envelope.encrypted_at)
     if encrypted_dt > now_dt:
@@ -875,13 +768,7 @@ def decrypt_and_verify_governance_evidence(
         raise ValueError("disabled encryption key cannot decrypt governance evidence")
     if not (_parse_time("not_before", key.not_before) <= encrypted_dt < _parse_time("not_after", key.not_after)):
         raise ValueError("encryption key was not valid when evidence was encrypted")
-    if (
-        decryptor.institution_id != envelope.institution_id
-        or decryptor.tenant_id != envelope.tenant_id
-        or decryptor.key_id != envelope.key_id
-        or decryptor.key_version != envelope.key_version
-        or decryptor.algorithm != CryptoAlgorithm.AES_256_GCM.value
-    ):
+    if decryptor.institution_id != envelope.institution_id or decryptor.tenant_id != envelope.tenant_id or decryptor.key_id != envelope.key_id or decryptor.key_version != envelope.key_version or decryptor.algorithm != CryptoAlgorithm.AES_256_GCM.value:
         raise ValueError("evidence decryptor does not match encrypted tenant key reference")
     aad_document = encrypted_evidence_aad_document(
         envelope_id=envelope.envelope_id,
@@ -985,15 +872,10 @@ class AuditAnchorRegistry:
         self._records: dict[tuple[str, str, int], AuditAnchorRecord] = {}
 
     def history(self, institution_id: str, tenant_id: str) -> tuple[AuditAnchorRecord, ...]:
-        return tuple(
-            sorted(
-                (
-                    record for (scope, tenant, _), record in self._records.items()
-                    if scope == institution_id and tenant == tenant_id
-                ),
-                key=lambda record: record.sequence,
-            )
-        )
+        return tuple(sorted(
+            (record for (scope, tenant, _), record in self._records.items() if scope == institution_id and tenant == tenant_id),
+            key=lambda record: record.sequence,
+        ))
 
     def register(self, batch: AuditAnchorBatch, receipt: ExternalAuditAnchorReceipt, *, recorded_at: str) -> AuditAnchorRecord:
         identity = (batch.institution_id, batch.tenant_id, batch.sequence)
