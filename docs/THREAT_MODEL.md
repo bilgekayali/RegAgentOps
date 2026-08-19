@@ -1,4 +1,4 @@
-# Threat Model — v0.7
+# Threat Model — v0.8
 
 ## Protected assets
 
@@ -9,195 +9,159 @@
 - MCP server approval, identity-pin, snapshot and binding integrity;
 - execution-lease integrity, executor binding and one-time consumption state;
 - emergency-stop state and signed execution-receipt integrity;
-- assurance-scope identity, context history and chronology;
-- human-confirmed framework applicability and EU operator-role assertions;
-- unique exact-reference applicability and crosswalk identities;
-- exact evidence-reference and assurance-package digest linkage;
-- immutable package identity;
-- pinned framework-version semantics; and
-- separation between assurance evidence and authorization/execution authority.
+- assurance-scope/applicability/crosswalk/package integrity;
+- tenant identity and PostgreSQL RLS policy/profile integrity;
+- institution-owned KMS/HSM key-reference integrity and tenant/purpose separation;
+- signed configuration-change chain integrity;
+- encrypted-governance-evidence tenant/key/AAD integrity;
+- external audit-anchor batch/receipt/chain integrity; and
+- separation between hardening evidence and execution authority.
 
 ## Trust boundaries
 
 1. **Caller → identity/policy plane**: action, identity and request inputs are untrusted until verified.
-2. **Institution data configuration → data-governance registry**: classification, categories, purposes, output and retention settings are privileged governance input.
-3. **Institution MCP configuration → MCP registry**: server approvals, identity pins and tool bindings remain privileged administrative input.
-4. **Authenticated authorization → approval/execution**: exact policy/governance artifacts remain execution authority; assurance objects are not accepted here.
-5. **External system inventory/context → `AssuranceScope`**: RegAgentOps receives an exact context digest but does not interpret or attest the source document.
-6. **Human reviewer → applicability assertion**: applicability and EU operator roles are accountable human assertions rather than machine-derived facts.
-7. **Evidence source → evidence reference**: exact subject-artifact digests and metadata are registered; source existence/truthfulness is not independently established.
-8. **Human mapper → crosswalk entry**: evidence-coverage state and rationale are human judgments constrained by exact assertion/evidence linkage and chronology.
-9. **Assurance registry → evidence package**: package contents are derived from exact registered entry digests and protected by immutable package identity.
-10. **Assurance package → auditor/legal/compliance process**: sufficiency, conformity, certification and legal conclusions remain external.
-11. **Execution lease ledger → external executor**: atomic one-time consumption remains the final RegAgentOps pre-dispatch boundary.
-12. **External executor → signed receipt**: represented result digest/outcome is evidence, not independently observed truth.
+2. **Institution data/MCP configuration → governance registries**: classification, purpose, tool/server and related configuration are privileged input.
+3. **Authenticated authorization → approval/execution**: exact current policy/governance artifacts remain execution authority.
+4. **Institution database configuration → RLS artifacts**: policy/profile artifacts are trusted administrative references; actual PostgreSQL deployment is external.
+5. **Application/database session → PostgreSQL RLS**: production session settings and role selection can enforce or defeat tenant isolation and remain outside the offline core.
+6. **Institution KMS/HSM → key references**: only reference/public material crosses into RegAgentOps; private/symmetric keys remain external.
+7. **KMS/HSM signer → configuration registry**: signature bytes cross the boundary and are locally verified before append.
+8. **KMS/HSM encryptor/decryptor → encrypted evidence**: authenticated ciphertext/plaintext crosses the adapter boundary; raw key material does not.
+9. **Evidence batch → external immutable anchor**: exact batch digest is sent externally and an opaque provider receipt is represented locally.
+10. **Assurance/hardening evidence → auditor/operations**: deployed-state correctness, evidence sufficiency and compliance conclusions remain external.
+11. **Execution lease ledger → external executor**: one-time consumption remains the final RegAgentOps pre-dispatch boundary.
 
-## Primary threats and controls
+## Primary v0.8 threats and controls
 
-### Framework-version drift
+### PostgreSQL RLS injection or partial policy
 
-Threat: a framework changes while old evidence mappings are silently interpreted against new requirements.
+Threat: a policy renderer accepts arbitrary SQL identifiers/fragments, fails to force RLS, protects reads without protecting writes, or scopes only by tenant without institution.
 
-Controls: v0.7 pins NIST AI RMF `1.0`, ISO/IEC 42001 `2023` and EU AI Act Regulation `2024/1689` in Python and JSON Schema. Supporting a revised framework requires an explicit contract/code change.
+Controls: table/policy/column identifiers use a bounded lowercase identifier grammar; session settings must use `regagentops.*`; the renderer always emits `ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY`, and the same exact institution+tenant predicate in both `USING` and `WITH CHECK`.
 
-Residual boundary: RegAgentOps does not retrieve amendment/revision status online.
+Residual boundary: v0.8 does not connect to PostgreSQL or prove that the rendered DDL is installed, enabled on every relevant table, resistant to privileged-role bypass, or consistently applied to replicas/backups.
 
-### Automated applicability laundering
+### Cross-tenant RLS profile substitution
 
-Threat: a model, prompt, policy engine or caller labels a framework reference applicable/not-applicable and presents that as an authoritative legal/governance determination.
+Threat: a tenant profile references unknown or institution-foreign RLS policy evidence.
 
-Controls: every crosswalk entry must bind an exact human-confirmed applicability assertion containing confirmation basis, reviewer identity and time. The assurance module has no automatic applicability/legal-rules interface.
+Control: `TenantIsolationRegistry` resolves every policy digest in the same institution before registering a tenant profile. Policy/profile versions are immutable and contiguous.
 
-Residual boundary: the human identity is typed evidence metadata, not a signed reviewer assertion in v0.7. Signed configuration/change-control is deferred to v0.8.
+### KMS/HSM custody laundering
 
-### Contradictory applicability assertions
+Threat: software-held keys are represented as institution-controlled hardware/cloud custody, or symmetric/private key bytes leak into governance artifacts.
 
-Threat: the same exact scope/framework/reference is simultaneously represented as applicable and not applicable through different assertion IDs.
+Controls: key-reference custody is structurally restricted to `kms` or `hsm`; configuration signing references expose only an Ed25519 public key; evidence-encryption references forbid public/raw symmetric material. No private/symmetric key field exists in the v0.8 contracts.
 
-Control: the registry permits one immutable `AssuranceApplicabilityAssertion` per exact scope/framework/version/reference tuple. A second assertion for that tuple fails closed. A changed judgment requires a new assurance context/scope.
+Residual boundary: the label is a governance assertion. v0.8 does not obtain provider attestation or prove the external system is genuinely hardware-backed or correctly administered.
 
-### EU AI Act role substitution
+### Cross-tenant key substitution
 
-Threat: evidence is mapped under provider/deployer or another operator role without accountable review, or EU roles leak into unrelated framework mappings.
+Threat: a signer/encryptor/decryptor for one tenant or key version is used for another tenant's artifact.
 
-Controls: EU AI Act assertions require at least one explicit governed operator role. NIST AI RMF and ISO/IEC 42001 assertions reject EU-role fields. The exact role tuple is digest-bound.
+Controls: key references bind institution, tenant, purpose, key id and version. Sign/encrypt/decrypt adapters must expose matching metadata and mismatch fails closed. Signed/encrypted artifacts also bind the exact key-reference digest.
 
-Residual boundary: RegAgentOps does not determine whether the asserted legal role, high-risk/GPAI status or resulting obligations are correct.
+### Key-rotation ambiguity
 
-### Assurance-scope substitution or backdating
+Threat: multiple versions reuse a key identity or non-contiguous versions obscure which key was intended.
 
-Threat: a changed deployment context overwrites the previous review scope, or a later context is backdated to appear historically valid.
+Controls: versions are contiguous per institution/tenant/purpose and rotated versions require distinct `key_id` values. New operations require an `ACTIVE` key. Historical verification/decryption can accept ordinary retirement but rejects `DISABLED` keys.
 
-Controls: scope identity includes institution/system/deployment/context digest, preserving changed context as a new historical scope. For the same deployment, a new context cannot have `recorded_at` earlier than the latest existing scope history. All downstream assurance artifacts bind the exact scope digest.
+Residual boundary: the immutable reference model does not itself execute provider-side disable/delete/rotation operations; v0.9 runbooks and adapters must implement those lifecycle actions.
 
-### Chronology fabrication
+### Configuration-change signature substitution
 
-Threat: applicability, evidence, mapping or package artifacts claim to have existed before their dependencies.
+Threat: a signed configuration change is modified, signed under another tenant/key, or detached from the exact previous change.
 
-Controls enforce:
+Controls: domain-separated Ed25519 signing binds institution, tenant, sequence, request digest, exact key-reference digest, previous signed-change digest and signing time. Verification resolves the exact registered key reference and checks signature/key validity at signing time.
 
-`scope.recorded_at <= applicability.confirmed_at <= mapping.mapped_at <= package.assembled_at`
+### Configuration-chain fork or replay
 
-and
+Threat: two competing changes extend the same tenant chain, a sequence is skipped, or an old chain head is reused.
 
-`scope.recorded_at <= evidence.recorded_at <= mapping.mapped_at <= package.assembled_at`.
+Controls: `ConfigurationChangeRegistry` requires one contiguous tenant sequence and exact previous `SignedConfigurationChange` digest. Chain chronology cannot move backwards.
 
-Package verification repeats the mapping/package chronology check.
+### Stale-object overwrite
 
-Residual boundary: these are application timestamps, not an independent trusted timestamp authority.
+Threat: a validly signed writer changes an object from an obsolete prior state and overwrites a newer represented configuration.
 
-### Applicability-state reversal
+Control: the registry tracks the latest represented digest per tenant/object identity. Subsequent changes to that object must bind the exact current digest as `previous_configuration_digest`.
 
-Threat: a human assertion is applicable, but a crosswalk silently labels it not applicable, or vice versa.
+Residual boundary: the registry represents configuration state; it does not independently verify that every external system applied the represented change.
 
-Controls: a human `NOT_APPLICABLE` assertion requires `NOT_APPLICABLE` coverage; an `APPLICABLE` assertion cannot be mapped as `NOT_APPLICABLE`.
+### AES-GCM tenant/AAD substitution
 
-### Evidence-free support claim
+Threat: ciphertext from another tenant, key, envelope or subject is relabeled as current evidence.
 
-Threat: a crosswalk claims evidence support without exact mapped evidence.
+Controls: domain-separated AAD binds envelope id, institution, tenant, exact key-reference digest and subject-artifact digest. The envelope also records AAD and plaintext SHA-256 digests. Adapter metadata must match the exact key reference.
 
-Controls: `SUPPORTED` and `PARTIAL` require at least one evidence-reference digest. `GAP` and `NOT_APPLICABLE` forbid evidence references.
+### Ciphertext tampering
 
-### Conflicting crosswalk entries
+Threat: encrypted governance evidence is modified while retaining metadata.
 
-Threat: the same exact applicability assertion receives parallel `SUPPORTED`, `PARTIAL` or `GAP` mappings.
+Controls: AES-256-GCM authenticated decryption is required by the adapter contract, and plaintext digest verification runs after decryption. Modified AAD changes the recorded AAD digest; modified ciphertext must fail provider authentication or plaintext-digest verification.
 
-Control: the registry permits one immutable crosswalk entry per exact applicability-assertion digest. Material mapping changes require a new assurance context/scope.
+Residual boundary: v0.8 cannot prove nonce uniqueness across every independent external caller. The core generates a fresh 96-bit nonce by default; production integration must maintain the same uniqueness property.
 
-### Cross-scope evidence substitution
+### External-anchor receipt substitution
 
-Threat: evidence from another system, deployment or context is reused in the current assurance scope.
+Threat: a receipt for another tenant or batch is attached to the current audit chain.
 
-Controls: scopes, applicability assertions, evidence references and crosswalk entries bind the exact scope digest. Cross-scope evidence is rejected during entry registration and package verification.
+Controls: `ExternalAuditAnchorReceipt` binds exact institution, tenant and `AuditAnchorBatch` digest. Registration rejects scope or batch mismatch.
 
-### Crosswalk assertion substitution
+### Audit-anchor chain fork or backdating
 
-Threat: evidence for one framework reference is attached to a different applicability assertion/reference.
+Threat: batches skip/fork sequence, reference the wrong previous record, or claim an external anchor predating the local batch.
 
-Controls: entry registration requires exact equality of scope, framework, pinned version and `reference_id` with the referenced applicability assertion.
+Controls: batches are tenant-scoped, contiguous and bind the exact previous `AuditAnchorRecord` digest. Registry chronology enforces batch assembly <= external anchor <= local recording and non-decreasing recorded time.
 
-### Package set substitution or duplicate-entry ambiguity
+Residual boundary: provider receipt authenticity, true external immutability and independent timestamp accuracy are not proven by the opaque receipt digest alone.
 
-Threat: a package advertises assertion/evidence/framework sets different from its entries, or duplicate entry inputs are silently collapsed.
+### Hardening-to-execution privilege escalation
 
-Controls: package assembly rejects duplicate crosswalk-entry digests. Verification resolves exact registered entries and recomputes the expected assertion, evidence and framework sets.
+Threat: possession of an RLS policy, encrypted evidence or anchor receipt is treated as permission to execute an agent action.
 
-### Package-identity reuse
+Control: v0.8 hardening types are not accepted as policy effects, approval continuation or execution-lease authority. Existing authorization and execution boundaries remain unchanged.
 
-Threat: the same `package_id` is reused for different evidence content, reviewer or assembly time.
+## Existing v0.2-v0.7 threats retained
 
-Controls: built packages are registered by institution/package ID. Reuse with a different artifact digest fails closed. Verification rejects an object that conflicts with an already registered package identity.
+Prior controls remain active: authenticated identity and key-confusion defenses; requester/approver separation and replay controls; bounded explicit MCP governance; exact data-purpose classification/purpose/output/retention controls; authorization freshness; executor-bound one-time leases; emergency-stop currentness; signed execution receipts; human-reviewed assurance applicability/crosswalk/package integrity; and non-certification semantics.
 
-### Certification or legal-compliance overclaim
+## Capability creep
 
-Threat: mapped evidence is represented as certification, ISO conformity or legal compliance.
+Threat: hardening code quietly becomes a PostgreSQL migration client, cloud KMS SDK integration, external-log client or production executor.
 
-Controls: `AssuranceEvidencePackage` structurally requires `certification_claimed = false`, `conformity_claimed = false`, `legal_compliance_determined = false` and `requires_human_review = true`.
-
-Residual boundary: downstream users can still misdescribe an artifact outside RegAgentOps; process and contractual controls remain necessary.
-
-### Evidence-reference fabrication
-
-Threat: a caller registers a digest for an artifact that is unavailable, incomplete or unauthoritative.
-
-Control: v0.7 makes the exact declared digest/type/schema/source immutable in the evidence reference and subsequent package linkage.
-
-Residual boundary: v0.7 does not fetch, independently verify or externally anchor the referenced artifact. Immutable anchoring is a v0.8 milestone.
-
-### Evidence-sufficiency overclaim
-
-Threat: valid mapped artifacts are assumed to fully satisfy a framework requirement merely because they are present.
-
-Controls: coverage states are evidence terms, not compliance states. Mapping rationale and human mapper identity are mandatory; no compliance score is calculated.
-
-### Assurance-to-execution privilege escalation
-
-Threat: an assurance package is used to override policy/data denial, approval, emergency stop or stale execution state.
-
-Controls: assurance classes are not inputs to the policy engine, approval gate, MCP PEP or execution gate. Flow is one-way from existing governance artifacts into assurance evidence.
-
-### Existing v0.2-v0.6 threats
-
-Prior controls remain active: signed authenticated identity; approval separation/delegation/replay controls; bounded explicit MCP governance; exact data-purpose governance with category/purpose/output/retention checks; execution authorization freshness; executor-bound one-time leases; emergency-stop currentness; and signed execution-result evidence.
-
-### Capability creep
-
-Threat: assurance code becomes a framework scraper, online legal rules engine, certification scorer or execution capability.
-
-Controls: generic CI and the dedicated Assurance Evidence Boundary reject network/process imports, invocation markers and automatic compliance-classification markers in `assurance.py`. The module consumes explicit human/digest artifacts only.
+Controls: generic CI and the dedicated Tenant and Cryptographic Hardening Boundary reject network/process imports plus PostgreSQL/cloud-SDK/client markers in `hardening.py`. The module renders SQL text and consumes adapter protocols only.
 
 ## Residual risks
 
-Applicability, EU operator roles, framework reference identifiers, evidence coverage and mapping rationale remain human/institution assertions. RegAgentOps enforces exact linkage and non-claim semantics but cannot establish that those judgments are legally or auditorily correct.
+Actual PostgreSQL RLS effectiveness depends on production role architecture, session-setting integrity, migration completeness, superuser/BYPASSRLS control, backup/replica isolation and operational monitoring.
 
-Evidence references are digest records, not immutable external storage. v0.7 does not prove that a referenced artifact is available, complete, truthful, generated by a trusted system or retained for a sufficient period.
+Actual KMS/HSM security depends on provider IAM, key policies, hardware/service guarantees, entropy, quorum/approval configuration, audit logging, rotation and compromise response. v0.8 stores references and verifies cryptographic outputs; it is not the custody system.
 
-The assurance/data/MCP/emergency-stop registries are reference in-memory state. Configuration is not yet protected by signed change control, tenant-isolated durable storage, KMS/HSM keys or external immutable anchoring.
+Configuration-change artifacts prove the represented signature/chain, not that every downstream component applied the intended configuration or that unauthorized out-of-band changes are impossible.
 
-SQLite approval/execution ledgers remain local serialization boundaries rather than distributed consensus or physical WORM storage.
+Encrypted envelopes protect represented bytes under the adapter's AES-GCM operation but do not independently guarantee secure plaintext handling before encryption or after decryption.
 
-The core records output/retention constraints but does not transform output bytes, schedule deletion, prove downstream retention enforcement or inspect post-execution data flows.
+External anchor records prove exact linkage to a declared provider receipt digest but do not establish legal admissibility, provider independence or physical WORM guarantees.
 
-A signed execution receipt proves integrity of represented evidence, not that an external executor actually performed the action exactly as represented. An assurance package organizes such evidence but does not increase that underlying proof strength.
+SQLite approval/execution ledgers remain local serialization boundaries rather than distributed consensus. In-memory governance/hardening registries are reference state rather than tenant-isolated durable production stores.
 
 ## Explicit non-claims
 
-v0.7 does not provide or claim:
+v0.8 does not provide or claim:
 
-- automatic NIST AI RMF applicability or compliance scoring;
-- ISO/IEC 42001 conformity assessment, certification or audit opinion;
-- EU AI Act territorial-scope, operator-role, prohibited-practice, high-risk, GPAI or obligation determination;
-- legal advice, legal-basis determination or regulatory-compliance determination;
-- proof that mapped evidence is sufficient for an auditor, regulator, supervisor or court;
-- immutable/external storage or independent timestamp authority for assurance evidence;
-- automatic PII/sensitive-data discovery or DLP scanning;
-- consent-management functionality;
-- semantic purpose inference or legal purpose-compatibility determination;
-- byte-level redaction, tokenization or anonymization;
-- retention scheduling, deletion enforcement or proof of deletion;
-- autonomous MCP discovery or live MCP connectivity;
-- production credential brokerage or tool invocation by the RegAgentOps core;
+- deployed PostgreSQL RLS verification or absolute non-bypassability;
+- automatic PostgreSQL migration/session-role management;
+- KMS/HSM provider attestation, FIPS validation or proof of hardware custody;
+- secure cloud/database IAM administration;
+- raw private/symmetric-key custody in the RegAgentOps core;
+- guaranteed nonce uniqueness across every external integration;
+- proof that external audit anchors are immutable, independently timestamped or legally sufficient;
+- backup/replica tenant isolation or database encryption-at-rest proof;
+- production key rotation, incident response or disaster-recovery execution;
+- automatic framework/legal compliance determination;
+- autonomous MCP connectivity or production tool invocation by the core;
 - distributed exactly-once execution across multiple executor nodes;
-- runtime sandboxing;
 - regulatory or standards certification; or
 - production fitness.
