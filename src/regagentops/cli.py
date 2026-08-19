@@ -4,6 +4,7 @@ import argparse
 import json
 
 from . import __version__
+from . import api as stable_api
 from .models import (
     AgentActionEnvelope,
     AgentDescriptor,
@@ -16,6 +17,9 @@ from .models import (
 )
 from .policy import PolicyBundle, PolicyEngine, PolicyRule
 from .registry import AgentRegistry, ToolRegistry
+
+
+STABLE_CLI_COMMANDS = ("contract-snapshot", "demo-decision")
 
 
 def _demo_decision() -> dict[str, object]:
@@ -80,13 +84,28 @@ def _demo_decision() -> dict[str, object]:
     }
 
 
+def _contract_snapshot() -> dict[str, object]:
+    return {
+        "release_version": __version__,
+        "stable_since_version": "1.0.0",
+        "stable_python_api_symbols": [f"regagentops.api.{name}" for name in stable_api.__all__],
+        "stable_cli_commands": list(STABLE_CLI_COMMANDS),
+        "json_schema_compatibility_baseline": "v1",
+        "execution_performed": False,
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="regagentops",
-        description="Offline RegAgentOps governed authorization core",
+        description="Offline RegAgentOps stable governed authorization and evidence reference",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subcommands = parser.add_subparsers(dest="command", required=True)
+    subcommands.add_parser(
+        "contract-snapshot",
+        help="print the deterministic v1 public API/CLI/schema compatibility boundary",
+    )
     subcommands.add_parser(
         "demo-decision",
         help="evaluate a deterministic synthetic authorization request without executing any tool",
@@ -96,6 +115,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "contract-snapshot":
+        print(json.dumps(_contract_snapshot(), indent=2, sort_keys=True))
+        return 0
     if args.command == "demo-decision":
         print(json.dumps(_demo_decision(), indent=2, sort_keys=True))
         return 0
