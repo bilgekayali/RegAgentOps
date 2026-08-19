@@ -12,6 +12,7 @@
 - signed configuration-change and encrypted-evidence integrity;
 - external audit-anchor chain integrity;
 - production egress and tool-dispatch allowlists;
+- exact current v0.8 tenant-isolation binding in the production worker;
 - isolated policy-worker profile integrity;
 - release source/artifact/configuration and security/provenance evidence bindings;
 - rollback/upgrade transition integrity;
@@ -24,28 +25,29 @@
 2. **Institution governance → policy/MCP/data/approval state**: privileged configuration determines governance evidence.
 3. **Authenticated authorization → external executor**: exact current authorization plus one-time lease remains execution authority.
 4. **Database/KMS/HSM/external anchor → v0.8 reference artefacts**: actual enforcement/custody remains external.
-5. **Network-security platform → egress policy**: the platform must translate and enforce exact tenant endpoint/trust rules.
-6. **Dispatch platform → tool allowlist**: the external dispatcher must enforce exact governed-tool→executor bindings.
-7. **Container/orchestrator → worker profile**: runtime isolation controls are external facts represented by the profile.
-8. **GitHub security/build pipeline → release manifest**: CodeQL, artifact/checksum and provenance evidence is imported by digest.
-9. **Change process → upgrade/rollback plan**: signed configuration and exact transition evidence constrain promotion.
-10. **Backup/DR platform → recovery checkpoint**: backup existence, integrity and restorability remain external facts.
+5. **v0.8 tenant-isolation registry → deployment registry**: current RLS/tenant profile becomes a mandatory production-worker dependency.
+6. **Network-security platform → egress policy**: the platform must translate and enforce exact tenant endpoint/trust rules.
+7. **Dispatch platform → tool allowlist**: the external dispatcher must enforce exact governed-tool→executor bindings.
+8. **Container/orchestrator → worker profile**: runtime isolation controls are external facts represented by the profile.
+9. **GitHub security/build pipeline → release manifest**: CodeQL, artifact/checksum and provenance evidence is imported by digest.
+10. **Change process → upgrade/rollback plan**: signed configuration and exact transition evidence constrain promotion.
+11. **Backup/DR platform → recovery checkpoint**: backup existence, integrity and restorability remain external facts.
 
 ## Primary v0.9 threats and controls
 
-### Wildcard or plaintext egress expansion
+### Wildcard, plaintext or aliased-IP egress expansion
 
-Threat: a deployment policy permits broad domains, paths, arbitrary schemes or plaintext endpoints, turning the policy worker into an uncontrolled network pivot.
+Threat: a deployment policy permits broad domains, paths, arbitrary schemes, plaintext endpoints or multiple textual encodings of the same IP, turning the policy worker into an uncontrolled network pivot or bypassing endpoint uniqueness.
 
-Controls: `EgressPolicy` is structurally default deny, `allow_wildcards=false`, `allow_plaintext=false`, and accepts only governed `https`/`tls` protocol values. Hosts must be canonical exact lowercase hostname/IP values with no wildcard, URL path or scheme. Each exact protocol/host/port endpoint can appear only once and carries a trust-policy digest.
+Controls: `EgressPolicy` is structurally default deny, `allow_wildcards=false`, `allow_plaintext=false`, and accepts only governed `https`/`tls` protocol values. Hosts must be canonical exact lowercase hostname/IP values with no wildcard, URL path or scheme. IP values must equal the canonical textual representation produced by the IP parser. Each exact protocol/host/port endpoint can appear only once and carries a trust-policy digest.
 
 Residual boundary: RegAgentOps does not resolve DNS, pin live addresses/certificates or install firewall/CNI/mesh rules. External enforcement can still be misconfigured.
 
-### Cross-tenant egress policy substitution
+### Cross-tenant egress or tenant-isolation substitution
 
-Threat: a worker for tenant A binds an egress policy from tenant B.
+Threat: a worker for tenant A binds egress policy or v0.8 tenant-isolation evidence belonging to tenant B, or simply supplies a syntactically valid but unknown tenant-isolation digest.
 
-Control: `ProductionDeploymentRegistry.register_worker_profile()` resolves the egress-policy digest only within the same institution+tenant. Cross-tenant lookup fails closed.
+Controls: `ProductionDeploymentRegistry.register_worker_profile()` resolves egress/tool state only within the same institution+tenant and receives the actual v0.8 `TenantIsolationRegistry`. It resolves the current tenant profile and requires the worker's `tenant_isolation_profile_digest` to equal that exact artifact digest. Unknown, cross-tenant or superseded profile evidence fails closed.
 
 ### Tool allowlist ambiguity
 
@@ -61,25 +63,33 @@ Controls: `IsolatedPolicyWorkerProfile` requires network namespace isolation, no
 
 Residual boundary: the core does not inspect a live container. Orchestrator admission controls and runtime monitoring must prove/enforce the profile.
 
-### Stale policy worker registration
+### Stale policy or RLS worker registration
 
-Threat: a newly registered worker profile intentionally binds superseded egress or tool policy evidence.
+Threat: a newly registered worker profile intentionally binds superseded egress, tool or tenant-isolation state.
 
-Control: worker registration resolves exact policy digests and requires both to be current at registration time. Egress/tool/worker versions are append-only and contiguous.
+Controls: worker registration resolves exact current egress/tool policies and current v0.8 tenant-isolation profile. The worker timestamp must be at or after all three dependencies. Egress/tool/worker histories are append-only and v0.8 tenant isolation remains append-only/versioned.
+
+### Backdated worker or release evidence
+
+Threat: a worker or release claims to have existed before the policies/profile it depends on, creating misleading historical evidence.
+
+Controls: worker `registered_at` cannot predate bound current egress, tool or tenant-isolation profile time. Release `created_at` cannot predate its worker profile. Rollback, upgrade and recovery chronology is also dependency checked.
+
+Residual boundary: these are application timestamps, not an independent timestamp authority.
 
 ### Release evidence substitution
 
 Threat: a release manifest points to one source commit while binding a different artifact, worker, configuration, CodeQL result, provenance record or checksum set.
 
-Controls: `DeploymentReleaseManifest` digest-binds every field: strict source Git SHA, semantic release version, artifact SHA-256, worker/configuration digest and exact CodeQL/provenance/checksum evidence digests. Release identities are immutable and versions increase monotonically per tenant.
+Controls: `DeploymentReleaseManifest` digest-binds strict source Git SHA, semantic release version, artifact SHA-256, worker/configuration digest and exact CodeQL/provenance/checksum evidence digests. Release identities are immutable and versions increase monotonically per tenant.
 
 Residual boundary: the offline core does not independently fetch GitHub/Sigstore evidence or decide whether CodeQL alert state satisfies institutional acceptance policy.
 
-### Stale release deployment after policy drift
+### Stale release deployment after policy or tenant drift
 
-Threat: a previously valid release is redeployed after egress/tool policy or worker hardening has changed.
+Threat: a previously valid release is redeployed after egress/tool policy, worker hardening or v0.8 tenant-isolation/RLS state has changed.
 
-Control: `assert_release_current()` resolves the exact registered release, worker profile and current egress/tool policy. Superseded worker, egress or tool state fails closed.
+Control: `assert_release_current()` resolves the exact registered release and requires the same current worker profile, egress policy, tool allowlist and tenant-isolation profile. Any superseded dependency fails closed.
 
 ### Version rollback disguised as upgrade
 
@@ -99,19 +109,11 @@ Threat: a rollback points laterally/forward or to an unregistered release.
 
 Controls: both releases must resolve in the same institution+tenant and the rollback target version must be strictly older. Trigger-condition digests, verification-procedure digest and bounded rollback window are mandatory.
 
-### Backdated change planning
-
-Threat: rollback, upgrade or recovery evidence claims to predate the release/change evidence it depends on.
-
-Controls: rollback cannot predate either referenced release; upgrade cannot predate its target release or rollback plan; recovery checkpoint cannot predate its release.
-
-Residual boundary: application timestamps are not an independent trusted timestamp authority; infrastructure/SIEM/external anchor timestamps remain important evidence.
-
 ### Recovery checkpoint substitution
 
 Threat: a checkpoint claims one release/configuration but points to an unrelated backup, anchor or restore verification.
 
-Control: checkpoint digest binds exact tenant release, configuration, encrypted-backup, external-audit-anchor and restore-verification digests. Registration resolves the release in the same tenant.
+Control: checkpoint digest binds exact tenant release, configuration, encrypted-backup, external-audit-anchor and restore-verification digests. Registration resolves the release in the same tenant and rejects a checkpoint timestamp that predates it.
 
 Residual boundary: a digest does not prove the backup exists or restores successfully. DR requires independent restore testing.
 
@@ -119,7 +121,7 @@ Residual boundary: a digest does not prove the backup exists or restores success
 
 Threat: the existence of CodeQL or artifact attestation is represented as proof the release is secure.
 
-Controls: release evidence fields are named and documented as evidence bindings rather than safety verdicts. CI separates CodeQL analysis, release provenance and functional boundary tests. Tag-scoped provenance does not run as a substitute for security review on every PR.
+Controls: release evidence fields are documented as evidence bindings rather than safety verdicts. CI separates CodeQL analysis, release provenance and functional boundary tests. Tag-scoped provenance does not substitute for security review.
 
 Residual boundary: institutions must define acceptable CodeQL alert thresholds, provenance verification policy and release approval.
 
@@ -133,21 +135,17 @@ Control: `Release Provenance Gate` builds/checks the release contract on PRs, bu
 
 Threat: a valid release/worker/rollback/checkpoint artefact is treated as permission to execute an agent action.
 
-Control: v0.9 deployment types are not inputs to the authorization, approval or execution-lease policy effects. The production-reference registry has no network, deploy or tool-invocation interface.
+Control: v0.9 deployment types are not inputs to authorization, approval or execution-lease policy effects. `deployment.py` has no network, deployment or tool-invocation interface.
 
-## v0.8 threats retained
+## Earlier threats retained
 
-PostgreSQL RLS injection/partial-policy, cross-tenant RLS substitution, KMS/HSM custody laundering, cross-tenant key substitution, key-rotation ambiguity, configuration-chain fork/stale overwrite, AES-GCM AAD/ciphertext substitution and external-anchor fork/backdating controls remain active.
-
-## v0.2-v0.7 threats retained
-
-Authenticated identity/key-confusion defenses; requester/approver separation and replay control; bounded explicit MCP governance; exact data-purpose classification/purpose/output/retention controls; authorization freshness; executor-bound one-time leases; emergency-stop currentness; signed receipt integrity; and human-reviewed assurance non-certification semantics remain active.
+v0.8 PostgreSQL RLS, tenant substitution, KMS/HSM custody, key lifecycle, configuration-chain, AES-GCM and audit-anchor controls remain active. v0.2-v0.7 authenticated identity, approval separation/replay, MCP governance, data-purpose control, execution freshness/one-time leases, emergency stop, signed receipt and human-reviewed assurance controls remain active.
 
 ## Capability creep
 
 Threat: the production-reference module quietly becomes a Kubernetes/cloud/database/network client or a direct tool executor.
 
-Controls: generic CI and the dedicated Production Reference Deployment Boundary parse `deployment.py` and reject network/process imports plus deployment/connection/tool-invocation markers. The module only creates/validates deterministic metadata.
+Controls: generic CI and the dedicated Production Reference Deployment Boundary parse `deployment.py` and reject network/process imports plus deployment/connection/tool-invocation markers. The module only creates/validates deterministic metadata and consumes the existing in-memory v0.8 tenant-isolation registry.
 
 ## CI/supply-chain configuration risk
 
@@ -159,7 +157,7 @@ Controls: workflow files are version controlled, covered by the dedicated produc
 
 Actual worker isolation depends on orchestrator/runtime configuration, admission policy, kernel/container security and monitoring. The worker profile is evidence, not remote attestation.
 
-Actual egress enforcement depends on firewall/CNI/service-mesh/proxy and DNS/TLS trust controls. The reference cannot prevent a privileged platform operator from bypassing external network policy.
+Actual RLS and egress enforcement depends on PostgreSQL roles/session context plus firewall/CNI/service-mesh/proxy and DNS/TLS trust controls. A privileged platform/database operator may still bypass external controls.
 
 Actual tool dispatch depends on executor IAM/credentials and the external dispatcher honoring the allowlist and v0.5 one-time lease boundary.
 
@@ -177,11 +175,10 @@ v0.9 does not provide or claim:
 - live firewall/CNI/service-mesh/proxy configuration;
 - DNS/TLS endpoint verification by the offline core;
 - production executor credential management or direct tool invocation;
-- proof that worker isolation flags are active in a live runtime;
-- CodeQL zero-vulnerability assurance;
-- automatic CodeQL alert acceptance policy;
+- proof that worker isolation flags or PostgreSQL RLS are active in a live runtime;
+- CodeQL zero-vulnerability assurance or automatic alert-acceptance policy;
 - in-core GitHub/Sigstore attestation verification;
 - proof that a backup is restorable or that RTO/RPO was achieved;
-- deployed PostgreSQL RLS non-bypassability or KMS/HSM hardware custody proof;
+- KMS/HSM hardware custody proof;
 - compliance, certification, regulatory approval, supervisory acceptance; or
 - production fitness.
