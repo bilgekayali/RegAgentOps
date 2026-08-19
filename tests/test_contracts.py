@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ContractTests(unittest.TestCase):
     def test_package_version(self):
-        self.assertEqual(regagentops.__version__, "0.6.0")
+        self.assertEqual(regagentops.__version__, "0.7.0")
 
     def test_json_schemas_are_parseable_and_version_pinned(self):
         expected = {
@@ -48,6 +48,11 @@ class ContractTests(unittest.TestCase):
             "data-resource-profile.schema.json": "regagentops.data-resource-profile.v1",
             "data-use-declaration.schema.json": "regagentops.data-use-declaration.v1",
             "data-governance-decision.schema.json": "regagentops.data-governance-decision.v1",
+            "assurance-scope.schema.json": "regagentops.assurance-scope.v1",
+            "assurance-applicability-assertion.schema.json": "regagentops.assurance-applicability-assertion.v1",
+            "assurance-evidence-reference.schema.json": "regagentops.assurance-evidence-reference.v1",
+            "assurance-crosswalk-entry.schema.json": "regagentops.assurance-crosswalk-entry.v1",
+            "assurance-evidence-package.schema.json": "regagentops.assurance-evidence-package.v1",
         }
         for filename, discriminator in expected.items():
             payload = json.loads((ROOT / "schemas" / filename).read_text(encoding="utf-8"))
@@ -60,6 +65,14 @@ class ContractTests(unittest.TestCase):
         self.assertIn("governance_evidence_digests", authorization["required"])
         authenticated = json.loads((ROOT / "schemas" / "authenticated-authorization-decision.schema.json").read_text())
         self.assertIn("governance_evidence_digests", authenticated["properties"]["authorization"]["required"])
+
+    def test_assurance_package_contract_cannot_claim_certification_or_compliance(self):
+        package = json.loads((ROOT / "schemas" / "assurance-evidence-package.schema.json").read_text())
+        properties = package["properties"]
+        self.assertFalse(properties["certification_claimed"]["const"])
+        self.assertFalse(properties["conformity_claimed"]["const"])
+        self.assertFalse(properties["legal_compliance_determined"]["const"])
+        self.assertTrue(properties["requires_human_review"]["const"])
 
     def test_demo_cli_is_offline_and_non_executing(self):
         completed = subprocess.run(
