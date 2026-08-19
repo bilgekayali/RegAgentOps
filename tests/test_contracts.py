@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ContractTests(unittest.TestCase):
     def test_package_version(self):
-        self.assertEqual(regagentops.__version__, "0.7.0")
+        self.assertEqual(regagentops.__version__, "0.8.0")
 
     def test_json_schemas_are_parseable_and_version_pinned(self):
         expected = {
@@ -53,6 +53,16 @@ class ContractTests(unittest.TestCase):
             "assurance-evidence-reference.schema.json": "regagentops.assurance-evidence-reference.v1",
             "assurance-crosswalk-entry.schema.json": "regagentops.assurance-crosswalk-entry.v1",
             "assurance-evidence-package.schema.json": "regagentops.assurance-evidence-package.v1",
+            "postgres-rls-policy.schema.json": "regagentops.postgres-rls-policy.v1",
+            "tenant-isolation-profile.schema.json": "regagentops.tenant-isolation-profile.v1",
+            "institution-crypto-key-reference.schema.json": "regagentops.institution-crypto-key-reference.v1",
+            "crypto-key-lifecycle-state.schema.json": "regagentops.crypto-key-lifecycle-state.v1",
+            "configuration-change-request.schema.json": "regagentops.configuration-change-request.v1",
+            "signed-configuration-change.schema.json": "regagentops.signed-configuration-change.v1",
+            "encrypted-governance-evidence.schema.json": "regagentops.encrypted-governance-evidence.v1",
+            "audit-anchor-batch.schema.json": "regagentops.audit-anchor-batch.v1",
+            "external-audit-anchor-receipt.schema.json": "regagentops.external-audit-anchor-receipt.v1",
+            "audit-anchor-record.schema.json": "regagentops.audit-anchor-record.v1",
         }
         for filename, discriminator in expected.items():
             payload = json.loads((ROOT / "schemas" / filename).read_text(encoding="utf-8"))
@@ -73,6 +83,18 @@ class ContractTests(unittest.TestCase):
         self.assertFalse(properties["conformity_claimed"]["const"])
         self.assertFalse(properties["legal_compliance_determined"]["const"])
         self.assertTrue(properties["requires_human_review"]["const"])
+
+    def test_hardening_contracts_pin_rls_kms_hsm_lifecycle_and_no_symmetric_key_material(self):
+        rls = json.loads((ROOT / "schemas" / "postgres-rls-policy.schema.json").read_text())
+        self.assertTrue(rls["properties"]["force_row_level_security"]["const"])
+        key = json.loads((ROOT / "schemas" / "institution-crypto-key-reference.schema.json").read_text())
+        self.assertEqual(key["properties"]["custody"]["enum"], ["kms", "hsm"])
+        self.assertNotIn("private_key", key["properties"])
+        self.assertNotIn("symmetric_key", key["properties"])
+        lifecycle = json.loads((ROOT / "schemas" / "crypto-key-lifecycle-state.schema.json").read_text())
+        self.assertEqual(lifecycle["properties"]["status"]["enum"], ["active", "retired", "disabled"])
+        encrypted = json.loads((ROOT / "schemas" / "encrypted-governance-evidence.schema.json").read_text())
+        self.assertEqual(encrypted["properties"]["algorithm"]["const"], "AES-256-GCM")
 
     def test_demo_cli_is_offline_and_non_executing(self):
         completed = subprocess.run(

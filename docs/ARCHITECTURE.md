@@ -1,12 +1,10 @@
 # RegAgentOps Architecture
 
-## v0.7 boundary
+## v0.8 boundary
 
-RegAgentOps v0.7 is an **offline authenticated authorization, data/purpose governance, human-approval, MCP-governance, signed execution-evidence and human-reviewed assurance-evidence control plane**.
+RegAgentOps v0.8 is an **offline authenticated authorization, data/purpose governance, human-approval, MCP-governance, signed execution-evidence, human-reviewed assurance-evidence, tenant-isolation and cryptographic-hardening control plane**.
 
-The v0.7 assurance layer is downstream and non-authoritative for execution: it crosswalks exact evidence digests to human-confirmed framework references, but it cannot widen an authorization decision, satisfy an approval requirement, issue an execution lease or create a regulatory/compliance conclusion.
-
-It still does **not** discover data, scan for PII, infer legal purpose, determine framework applicability, classify EU AI Act risk, retrieve framework text, connect to MCP servers, obtain production credentials, redact output bytes or invoke a requested tool.
+The v0.8 hardening layer is adapter-oriented. It defines exact PostgreSQL RLS, KMS/HSM key-reference, signed configuration-change, encrypted-evidence and external-anchor artifacts without opening database, cloud, network or production-execution capability inside the core.
 
 ```text
                     EXECUTION CONTROL PLANE
@@ -54,159 +52,146 @@ AgentActionEnvelope ------+------ PolicyBundle
 
                     ASSURANCE EVIDENCE PLANE
 
-       external system/deployment context digest
-                          |
-                          v
-                    AssuranceScope
-                          |
-                  human applicability
-                          v
-          AssuranceApplicabilityAssertion
-                /                    \
-               /                      \
-      exact evidence digests          explicit GAP / N/A
-             |                         |
-             v                         |
-  AssuranceEvidenceReference           |
-             \                         /
-              +-----------------------+
-                          |
-                          v
-              AssuranceCrosswalkEntry
-                          |
-                          v
-              AssuranceEvidencePackage
+Signed/governed artifacts --> AssuranceEvidenceReference
+                                  |
+                         human applicability/mapping
+                                  |
+                                  v
+                       AssuranceEvidencePackage
+
+                    HARDENING REFERENCE PLANE
+
+PostgresRlsPolicy ----> TenantIsolationProfile
+        |
+        +---- safe reference DDL: ENABLE + FORCE RLS
+              exact institution+tenant USING/WITH CHECK
+
+InstitutionCryptoKeyReference (KMS/HSM only)
+        |                         |
+        | Ed25519                 | AES-256-GCM
+        v                         v
+SignedConfigurationChange   EncryptedGovernanceEvidence
+        |                         |
+        +------ exact tenant -----+
+                  bindings
+                         |
+                         v
+                  AuditAnchorBatch
+                         |
+            external immutable service
+                         |
+                         v
+             ExternalAuditAnchorReceipt
+                         |
+                         v
+                 AuditAnchorRecord
 ```
 
-## Assurance scope identity and history
+## PostgreSQL RLS reference boundary
 
-`AssuranceScope` binds an assurance review to one institution, AI-system identifier, deployment identifier, accountable human owner, environment and an exact SHA-256 digest of the external deployment/system context record.
+`PostgresRlsPolicy` is immutable/versioned policy metadata. Table, policy and column names must match a bounded lowercase PostgreSQL identifier grammar, preventing the reference renderer from accepting arbitrary SQL fragments. Session settings are restricted to the `regagentops.*` namespace.
 
-The registry identity includes institution, system, deployment **and context digest**. A changed external context therefore creates a new immutable historical scope rather than rewriting the existing deployment scope. New context scopes for the same deployment must be chronologically non-decreasing; a later-registered context cannot claim an earlier `recorded_at` than the existing deployment scope history.
+`render_postgres_rls_sql()` always emits `ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY`, and the same exact institution+tenant predicate in both `USING` and `WITH CHECK`. The reference therefore covers row visibility and attempted writes.
 
-The core does not ingest or interpret the external context document. The digest makes scope substitution detectable while leaving inventory, architecture, model-card, risk-assessment or deployment records in their source systems.
+`TenantIsolationProfile` is institution/tenant/environment scoped and binds a database role to exact RLS-policy digests. `TenantIsolationRegistry` keeps policy/profile versions append-only and contiguous and exposes a digest snapshot for integration evidence.
 
-## Pinned framework-version boundary
+The core does not apply SQL. A production adapter must set transaction/session context safely and prove the expected role/policies exist in the target PostgreSQL deployment.
 
-v0.7 recognizes three framework namespaces with explicit versions:
+## Institution-owned KMS/HSM key-reference boundary
 
-- `nist_ai_rmf` → `1.0`;
-- `iso_iec_42001` → `2023`;
-- `eu_ai_act` → `2024/1689`.
+`InstitutionCryptoKeyReference` is scoped by institution, tenant, purpose and key version. Custody is restricted to `kms` or `hsm`.
 
-The pin is enforced in Python and JSON Schema. A framework revision cannot silently change historical or current crosswalk semantics; support for a new version requires an explicit software/contract update.
+Two v0.8 key purposes are recognized:
 
-`reference_id` is intentionally operator supplied. RegAgentOps does not embed or validate full normative framework text and therefore does not act as a framework-content authority.
+- configuration signing: Ed25519, with only the public verification key represented;
+- governance-evidence encryption: AES-256-GCM, with no symmetric key bytes represented.
 
-## Human-confirmed applicability
+`InstitutionCryptoKeyRegistry` is append-only per institution/tenant/purpose. Versions are contiguous and rotation requires distinct key IDs. `ACTIVE` keys may create new cryptographic artifacts. Historical verification/decryption accepts keys that are still `ACTIVE` or have become `RETIRED`, provided they were valid at artifact creation. `DISABLED` fails closed.
 
-`AssuranceApplicabilityAssertion` is a required artefact, not a derived boolean. It binds exact scope, framework/version/reference, applicability, confirmation basis, human reviewer and time. EU AI Act assertions additionally bind at least one human-confirmed operator role; EU roles are rejected on NIST and ISO mappings.
+The registry does not prove hardware custody. The external adapter remains responsible for actual KMS/HSM authorization, generation, key policy, audit, rotation and compromise response.
 
-For one exact scope/framework/version/reference tuple, the v0.7 registry permits one immutable applicability assertion. A contradictory second assertion under another ID is rejected. A changed applicability judgment therefore belongs to a new assurance scope/context.
+## Signed configuration change control
 
-Applicability confirmation cannot predate the referenced scope. No prompt, model output, policy decision, data classification, risk tier or tool metadata can automatically create framework applicability.
+`ConfigurationChangeRequest` binds exact tenant, sequence, object identity, previous/proposed configuration digests, reason digest, requester and chronology.
 
-The human identity field is evidence metadata rather than a new signed identity protocol. Cryptographically signed configuration/change-control is deferred to v0.8.
+`SignedConfigurationChange` uses a domain-separated signing document with purpose `regagentops.configuration-change.v1`. The signature binds:
 
-## Evidence references
+- exact request digest;
+- exact previous signed-change digest;
+- exact institution/tenant;
+- exact KMS/HSM key-reference digest;
+- key id/version and Ed25519 algorithm; and
+- signing time.
 
-`AssuranceEvidenceReference` binds an evidence identifier to exact assurance scope, subject artifact SHA-256 digest, artifact type/schema version, source component and recording time.
+`ConfigurationChangeRegistry.append()` verifies the signature internally before storing the artifact. It then enforces one contiguous tenant-wide chain, exact previous-change linkage, non-decreasing chronology, and exact prior object state for previously changed objects. A stale configuration writer therefore cannot silently overwrite a newer represented object state.
 
-The record is a digest reference. It does not independently establish external artifact existence, truthfulness, completeness, immutability or legal sufficiency. An evidence reference cannot predate its scope.
+The signer is a protocol. Production signing can be performed behind KMS/HSM adapters without exposing the private key to RegAgentOps.
 
-Earlier RegAgentOps artefacts can be referenced without changing their schemas: authenticated authorization decisions, data-governance decisions, approval resolutions, MCP policy-enforcement results, execution leases, signed execution receipts and other evidence can be addressed by digest.
+## Tenant-scoped encrypted governance evidence
 
-## Crosswalk semantics and uniqueness
+`EncryptedGovernanceEvidence` is an AES-256-GCM envelope around governance evidence bytes. The encryption/decryption providers are protocols whose institution, tenant, key id/version and algorithm must match the exact registered encryption-key reference.
 
-`AssuranceCrosswalkEntry` binds one exact human applicability assertion to zero or more exact evidence-reference digests and one coverage state:
+AAD is domain separated with purpose `regagentops.tenant-encrypted-governance-evidence.v1` and binds envelope id, institution, tenant, exact key-reference digest and subject-artifact digest. The envelope also records raw plaintext SHA-256 and AAD SHA-256 digests.
 
-`SUPPORTED | PARTIAL | GAP | NOT_APPLICABLE`
+New encryption requires an `ACTIVE` key valid at `encrypted_at`. Historical decryption can use an `ACTIVE` or `RETIRED` key that was valid at encryption time; `DISABLED` keys fail closed. The default nonce is a fresh 96-bit random value, while deterministic nonce injection exists only to support controlled tests.
 
-These states describe evidence coverage, not compliance. `SUPPORTED` and `PARTIAL` require evidence; `GAP` and `NOT_APPLICABLE` forbid evidence. A human `NOT_APPLICABLE` assertion can only produce `NOT_APPLICABLE` coverage, while an `APPLICABLE` assertion cannot be rewritten to `NOT_APPLICABLE`.
+## External audit anchoring
 
-Each exact applicability assertion can have one immutable crosswalk entry. Parallel entries with conflicting coverage are rejected. Mapping cannot predate either the applicability confirmation or any mapped evidence reference.
+`AuditAnchorBatch` groups exact evidence-artifact digests in a tenant-scoped contiguous chain. Each batch after the first binds the exact previous `AuditAnchorRecord` digest.
 
-Every mapping requires a human mapper identity, rationale and mapping time. The registry does not infer coverage from the number or type of artifacts.
+`ExternalAuditAnchorReceipt` represents the opaque result of an external immutable/timestamping service: provider id, anchor id, exact batch digest, provider-receipt digest and anchor time.
 
-## Assurance package integrity
+`AuditAnchorRegistry.register()` verifies tenant scope, exact batch binding, contiguous sequence, exact previous record and monotonic assembly → anchoring → recording chronology before creating `AuditAnchorRecord`.
 
-`AssuranceEvidencePackage` is assembled from exact registered crosswalk-entry digests for one scope. The package contains derived exact sets of crosswalk entries, applicability assertions, evidence references and framework namespaces.
+This proves exact local linkage to a declared external receipt digest; it does not independently prove the provider is immutable or that its timestamp has a specific legal evidentiary status.
 
-Package assembly must occur at or after every included crosswalk entry. Duplicate crosswalk-entry inputs are rejected instead of silently deduplicated.
+## Relationship to authorization and assurance
 
-Built packages are registered by institution and `package_id`. Reusing a package identity with different content fails closed. `verify_package()` also checks any registered package identity before resolving entries and recomputing the expected assertion/evidence/framework sets. Substitution, unknown digests, chronology violations or cross-scope references fail closed.
-
-Package semantics are structurally constrained:
-
-- `certification_claimed` must be `false`;
-- `conformity_claimed` must be `false`;
-- `legal_compliance_determined` must be `false`; and
-- `requires_human_review` must be `true`.
-
-The assurance layer therefore cannot manufacture a valid object that represents itself as an ISO certificate, conformity statement or legal-compliance determination.
-
-## Chronological provenance
-
-The registry enforces this dependency ordering:
+v0.8 does not change policy precedence or add new authorization effects. The flow remains one-way:
 
 ```text
-scope.recorded_at <= applicability.confirmed_at <= crosswalk.mapped_at <= package.assembled_at
-scope.recorded_at <= evidence.recorded_at       <= crosswalk.mapped_at <= package.assembled_at
+policy/data/MCP/approval/execution artifacts
+           |                     |
+           |                     +--> assurance crosswalk/package
+           |
+           +--> tenant encryption / audit anchoring
+
+hardening artifact -X-> policy ALLOW
+hardening artifact -X-> approval continuation
+hardening artifact -X-> execution lease creation
 ```
 
-Equal timestamps are allowed. The timestamps are application evidence and are not an independent trusted timestamp authority.
+Hardening artifacts can protect/configure a production adapter, but the offline core does not treat the existence of an RLS policy, encryption envelope or anchor receipt as authority to execute an action.
 
-## Relationship to execution authorization
+## Existing boundaries retained
 
-v0.7 is one-way with respect to earlier governance evidence:
-
-```text
-v0.1-v0.6 artifacts --> assurance evidence references --> crosswalk/package
-
-assurance package -X-> policy allow
-assurance package -X-> approval continuation
-assurance package -X-> execution lease
-```
-
-No v0.7 class is accepted by the policy engine, approval gate, MCP PEP or execution gate. An assurance mapping cannot override `DENY`, satisfy `REQUIRE_HUMAN_APPROVAL`, relax data constraints, suppress emergency stop or make stale governance current.
-
-## Existing authorization and execution boundaries retained
-
-v0.1 policy precedence remains:
-
-`DENY > REQUIRE_HUMAN_APPROVAL > ALLOW_WITH_CONSTRAINTS > ALLOW`
-
-v0.2 signed authenticated identity remains mandatory. v0.3 approval cannot override denial. v0.4 MCP governance remains explicit and non-executing. v0.5 leases remain short-lived, one-time and executor-bound. v0.6 data-purpose governance remains exact, request-bound and currentness checked before execution. The authenticated-authorization and signed-receipt chains are not modified by v0.7.
+v0.1 policy precedence remains `DENY > REQUIRE_HUMAN_APPROVAL > ALLOW_WITH_CONSTRAINTS > ALLOW`. v0.2 authenticated identity remains mandatory. v0.3 approval cannot override denial. v0.4 MCP governance remains explicit/non-executing. v0.5 leases remain short-lived, one-time and executor-bound. v0.6 data-purpose governance remains exact/currentness checked. v0.7 assurance remains human-reviewed and non-certifying.
 
 ## Trust boundaries
 
-1. **Caller → identity/policy plane**: action and identity inputs remain untrusted until verified.
-2. **Institution data governance → data registry**: resource categories, purpose compatibility, output and retention configuration remain privileged governance input.
-3. **Institution MCP configuration → MCP registry**: server approvals, pins and tool bindings remain privileged configuration.
-4. **Authenticated authorization → approval/execution**: exact digests and current state remain execution authority; assurance objects are not accepted here.
-5. **External assurance context → `AssuranceScope`**: the caller provides an exact context digest; RegAgentOps does not interpret the source record.
-6. **Human reviewer → applicability assertion**: framework applicability and EU operator roles are accountable human assertions, not machine-derived facts.
-7. **Evidence source → evidence reference**: exact subject digests cross into the assurance registry; source truth/immutability is not independently proven.
-8. **Human mapper → crosswalk entry**: coverage and rationale are human judgments constrained by exact assertion/evidence linkage and chronology.
-9. **Crosswalk registry → evidence package**: exact entries determine immutable package identity and contents; verification rejects digest-set substitution.
-10. **Assurance package → external auditor/legal/compliance process**: the package is organized evidence only; acceptance, sufficiency and legal conclusions remain external.
+1. **Caller → identity/policy plane**: request and identity inputs remain untrusted until verified.
+2. **Institution governance → data/MCP registries**: policy-supporting configuration remains privileged administrative input.
+3. **Authenticated authorization → approval/execution**: exact current authorization artifacts remain execution authority.
+4. **Institution → RLS reference artifacts**: policy metadata is privileged; rendered DDL becomes effective only when a production database adapter installs it.
+5. **Application/database session → PostgreSQL RLS**: session institution/tenant settings and database role become a critical production boundary outside the offline core.
+6. **Institution KMS/HSM → crypto-key reference**: only public/reference metadata crosses into RegAgentOps; private/symmetric key custody remains external.
+7. **KMS/HSM signing adapter → signed configuration registry**: externally produced signature bytes cross the boundary and are locally verified before append.
+8. **KMS/HSM encryption adapter → encrypted evidence**: plaintext/AAD are provided to the adapter and authenticated ciphertext returns; key bytes do not cross.
+9. **Evidence store → external anchor service**: exact batch digest is anchored externally; an opaque receipt digest returns.
+10. **Assurance/hardening evidence → auditor/operations**: sufficiency, deployed-state correctness and compliance conclusions remain external.
 
 ## Historical evidence versus current state
 
-The assurance registry is append-only by identity. Scope context history is retained; exact scope/framework/reference applicability is singular within a scope; each applicability assertion has one crosswalk; and built package identities are immutable.
+RLS policies, tenant profiles, crypto-key references, signed changes, encrypted envelopes and anchor records are immutable historical artifacts. New policy/profile/key versions create new exact digests rather than rewriting old records.
 
-Unlike the v0.5/v0.6 execution path, assurance packages are historical review artifacts and do not become invalid merely because unrelated evidence is later registered. When the external context, applicability judgment or material mapping changes, the v0.7 model expects a new assurance scope/context and a newly assembled package rather than mutating the old review.
+Historical cryptographic evidence remains verifiable/decryptable across ordinary key retirement when the adapter retains access and the key was valid at artifact creation. A key marked `DISABLED` is treated as unsafe and rejected.
 
 ## Capability separation
 
-Authorization, identity, approval, MCP-governance, execution, data-governance and assurance modules are statically checked in CI to reject network/process capability imports.
+`hardening.py` contains no PostgreSQL driver, cloud SDK, KMS/HSM client, external-log client, shell/process invocation or tool-execution interface. CI statically rejects those capability markers.
 
-`assurance.py` contains no framework web client, document scraper, legal classifier, automatic applicability engine, certification scorer, MCP connection or tool invocation interface. It consumes explicit human and digest artefacts only.
-
-Signed configuration change control, tenant-isolated durable storage, KMS/HSM keys and external immutable audit anchoring remain v0.8 concerns.
+The production realization of PostgreSQL RLS, KMS/HSM network calls, secrets authorization, immutable external storage, backup/replica isolation and operations monitoring is explicitly deferred to the v0.9 deployment boundary.
 
 ## Standards posture
 
-NIST AI RMF 1.0, ISO/IEC 42001:2023 and Regulation (EU) 2024/1689 are framework/version namespaces for evidence mapping. RegAgentOps does not reproduce full normative text or claim that a mapped reference has been legally or auditorily satisfied.
-
-A `SUPPORTED` crosswalk state means only that a human mapper associated exact evidence with that reference for the exact assurance scope. It is not a compliance, conformity or certification result.
+The RLS renderer uses PostgreSQL row-level-security concepts as a deployment reference. Ed25519 and AES-256-GCM are cryptographic algorithm choices for the defined artifact boundaries. These choices are not a FIPS, HSM, cloud-provider, regulatory or certification claim.

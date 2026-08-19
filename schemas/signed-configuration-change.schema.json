@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://regagentops.dev/schemas/signed-configuration-change.schema.json",
+  "title": "SignedConfigurationChange",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request", "previous_change_digest", "key_reference_digest", "key_id", "key_version", "algorithm", "signed_at", "signature_base64url", "signing_document_digest", "schema_version"],
+  "properties": {
+    "request": {"$ref": "configuration-change-request.schema.json"},
+    "previous_change_digest": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "key_reference_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "key_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "key_version": {"type": "integer", "minimum": 1},
+    "algorithm": {"const": "Ed25519"},
+    "signed_at": {"type": "string", "minLength": 2, "maxLength": 64, "pattern": "Z$"},
+    "signature_base64url": {"type": "string", "pattern": "^[A-Za-z0-9_-]{86}$"},
+    "signing_document_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "schema_version": {"const": "regagentops.signed-configuration-change.v1"}
+  }
+}

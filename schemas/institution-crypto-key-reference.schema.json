@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://regagentops.dev/schemas/institution-crypto-key-reference.schema.json",
+  "title": "InstitutionCryptoKeyReference",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["institution_id", "tenant_id", "purpose", "key_version", "key_id", "custody", "algorithm", "public_key_base64url", "status", "not_before", "not_after", "registered_at", "schema_version"],
+  "properties": {
+    "institution_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "tenant_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "purpose": {"enum": ["config_signing", "evidence_encryption"]},
+    "key_version": {"type": "integer", "minimum": 1},
+    "key_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "custody": {"enum": ["kms", "hsm"]},
+    "algorithm": {"enum": ["Ed25519", "AES-256-GCM"]},
+    "public_key_base64url": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9_-]+$"},
+    "status": {"enum": ["active", "retired", "disabled"]},
+    "not_before": {"type": "string", "minLength": 2, "maxLength": 64, "pattern": "Z$"},
+    "not_after": {"type": "string", "minLength": 2, "maxLength": 64, "pattern": "Z$"},
+    "registered_at": {"type": "string", "minLength": 2, "maxLength": 64, "pattern": "Z$"},
+    "schema_version": {"const": "regagentops.institution-crypto-key-reference.v1"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"purpose": {"const": "config_signing"}}, "required": ["purpose"]},
+      "then": {"properties": {"algorithm": {"const": "Ed25519"}, "public_key_base64url": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"}}}
+    },
+    {
+      "if": {"properties": {"purpose": {"const": "evidence_encryption"}}, "required": ["purpose"]},
+      "then": {"properties": {"algorithm": {"const": "AES-256-GCM"}, "public_key_base64url": {"type": "null"}}}
+    }
+  ]
+}

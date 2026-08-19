@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://regagentops.dev/schemas/postgres-rls-policy.schema.json",
+  "title": "PostgresRlsPolicy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["institution_id", "policy_id", "policy_version", "table_name", "policy_name", "institution_column", "tenant_column", "institution_setting", "tenant_setting", "force_row_level_security", "registered_at", "schema_version"],
+  "properties": {
+    "institution_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "policy_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "policy_version": {"type": "integer", "minimum": 1},
+    "table_name": {"type": "string", "pattern": "^[a-z_][a-z0-9_]{0,62}$"},
+    "policy_name": {"type": "string", "pattern": "^[a-z_][a-z0-9_]{0,62}$"},
+    "institution_column": {"type": "string", "pattern": "^[a-z_][a-z0-9_]{0,62}$"},
+    "tenant_column": {"type": "string", "pattern": "^[a-z_][a-z0-9_]{0,62}$"},
+    "institution_setting": {"type": "string", "pattern": "^regagentops\\.[a-z_][a-z0-9_]{0,62}$"},
+    "tenant_setting": {"type": "string", "pattern": "^regagentops\\.[a-z_][a-z0-9_]{0,62}$"},
+    "force_row_level_security": {"const": true},
+    "registered_at": {"type": "string", "minLength": 2, "maxLength": 64, "pattern": "Z$"},
+    "schema_version": {"const": "regagentops.postgres-rls-policy.v1"}
+  }
+}
