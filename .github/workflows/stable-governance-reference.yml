@@ -1,0 +1,113 @@
+name: Stable Governance Reference Boundary
+
+on:
+  push:
+    branches:
+      - main
+      - "agent/**"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  stable-governance-reference:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install package
+        run: python -m pip install -e .
+      - name: Run v1 stability regression tests
+        run: python -m unittest discover -s tests -p 'test_stability*.py' -v
+      - name: Verify v1 stable contracts and public baselines
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import tomllib
+          import regagentops
+          import regagentops.api as api
+
+          assert regagentops.__version__ == '1.0.0'
+          assert tomllib.load(open('pyproject.toml', 'rb'))['project']['version'] == '1.0.0'
+
+          public = json.loads(Path('compatibility/v1-public-api.json').read_text(encoding='utf-8'))
+          assert public['stable_since_version'] == '1.0.0'
+          assert public['python_api_symbols'] == [f'regagentops.api.{name}' for name in api.__all__]
+          assert public['cli_commands'] == ['contract-snapshot', 'demo-decision']
+
+          schema_baseline = json.loads(Path('compatibility/v1-schema-baseline.json').read_text(encoding='utf-8'))
+          assert schema_baseline['stable_since_version'] == '1.0.0'
+          for filename, discriminator in schema_baseline['schemas'].items():
+              payload = json.loads((Path('schemas') / filename).read_text(encoding='utf-8'))
+              assert payload['$schema'] == 'https://json-schema.org/draft/2020-12/schema'
+              assert payload['properties']['schema_version']['const'] == discriminator
+              assert payload['additionalProperties'] is False
+
+          compatibility = json.loads(Path('schemas/stable-compatibility-policy.schema.json').read_text())
+          assert compatibility['properties']['breaking_change_requires_major']['const'] is True
+          assert compatibility['properties']['deprecation_min_minor_releases']['minimum'] == 2
+          review = json.loads(Path('schemas/independent-security-review-checklist.schema.json').read_text())
+          assert review['properties']['reviewer_independence_confirmed']['const'] is True
+          assert review['properties']['items']['minItems'] == review['properties']['items']['maxItems'] == 12
+          responsibility = json.loads(Path('schemas/legal-accessibility-responsibility-scope.schema.json').read_text())
+          assert responsibility['properties']['legal_advice_provided']['const'] is False
+          assert responsibility['properties']['regulatory_compliance_determined']['const'] is False
+          assert responsibility['properties']['accessibility_conformance_claimed']['const'] is False
+          stable = json.loads(Path('schemas/stable-release-baseline.schema.json').read_text())
+          assert stable['properties']['boundary_evidence']['minItems'] == 9
+          assert stable['properties']['boundary_evidence']['maxItems'] == 9
+          upgrade = json.loads(Path('schemas/supported-upgrade-path.schema.json').read_text())
+          assert upgrade['properties']['source_series']['const'] == '0.9.x'
+          assert upgrade['properties']['target_version']['const'] == '1.0.0'
+          assert 'source_release_digest' in upgrade['required']
+          assert 'target_release_digest' in upgrade['required']
+          PY
+      - name: Verify fail-closed stable release implementation and tag gate
+        shell: bash
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          source = Path('src/regagentops/stability.py').read_text(encoding='utf-8')
+          tree = ast.parse(source)
+          banned = {'asyncio', 'ftplib', 'http', 'requests', 'socket', 'subprocess', 'telnetlib', 'urllib'}
+          for node in ast.walk(tree):
+              if isinstance(node, ast.Import):
+                  imports = {alias.name.split('.')[0] for alias in node.names}
+              elif isinstance(node, ast.ImportFrom) and node.module:
+                  imports = {node.module.split('.')[0]}
+              else:
+                  continue
+              blocked = imports & banned
+              if blocked:
+                  raise SystemExit(f'stability core forbidden capability import(s): {sorted(blocked)}')
+
+          for marker in (
+              'self._production.assert_release_current(source_release)',
+              'self._production.assert_release_current(production_release)',
+              'supported upgrade path source release digest mismatch',
+              'supported upgrade path target release digest mismatch',
+              'production-reference boundary evidence must bind exact release manifest',
+              'stable release requires explicit independent-review confirmation',
+              'v1 responsibility scope must retain the exact required non-claims',
+          ):
+              assert marker in source, marker
+
+          release = Path('.github/workflows/release-provenance.yml').read_text(encoding='utf-8')
+          for marker in (
+              'SOURCE_DATE_EPOCH',
+              'dist-a',
+              'dist-b',
+              'actions/attest@v4',
+              'security-review/v1.0-review.json',
+              "github.ref_name == 'v1.0.0'",
+              'reviewer_independence_confirmed',
+          ):
+              assert marker in release, marker
+          PY
