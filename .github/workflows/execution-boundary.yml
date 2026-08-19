@@ -76,6 +76,10 @@ jobs:
               assert schema['additionalProperties'] is False
               assert schema['properties']['schema_version']['const'] == discriminator
 
+          lease = json.loads(Path('schemas/execution-lease.schema.json').read_text())
+          consumption = json.loads(Path('schemas/execution-lease-consumption.schema.json').read_text())
+          assert 'executor_id' in lease['required']
+          assert 'executor_id' in consumption['required']
           receipt = json.loads(Path('schemas/tool-execution-receipt.schema.json').read_text())
           assert 'result_digest' in receipt['required']
           assert 'policy_decision_digest' in receipt['required']
@@ -110,6 +114,12 @@ jobs:
                   raise SystemExit(f'execution core must remain offline and non-invoking: {marker}')
           if 'EXECUTION_LEASE_MAX_SECONDS = 120' not in source:
               raise SystemExit('execution leases must remain explicitly short-lived')
+          if 'EXECUTION_AUTHORIZATION_MAX_AGE_SECONDS = 120' not in source:
+              raise SystemExit('execution authorization must remain explicitly freshness-bounded')
+          if 'assert_recorded(consumption)' not in source:
+              raise SystemExit('receipt construction must prove lease consumption against the append-only ledger')
+          if 'executor_id != lease.executor_id' not in source:
+              raise SystemExit('lease redemption/receipt construction must retain executor binding')
           if 'regagentops.tool-execution-receipt.v1' not in source or 'Ed25519' not in source:
               raise SystemExit('execution receipts must remain domain-separated and Ed25519-backed')
           upper = source.upper()
