@@ -18,6 +18,7 @@ from .models import AgentActionEnvelope, Decision, canonical_json, digest_artifa
 
 _HEX_64 = re.compile(r"^[0-9a-f]{64}$")
 EXECUTION_LEASE_MAX_SECONDS = 120
+EXECUTION_AUTHORIZATION_MAX_AGE_SECONDS = 120
 
 
 def _require_digest(name: str, value: str | None, *, optional: bool = False) -> None:
@@ -94,6 +95,8 @@ class EmergencyStopRegistry:
         self._states: dict[tuple[str, int], EmergencyStopState] = {}
 
     def register(self, state: EmergencyStopState) -> str:
+        if not isinstance(state, EmergencyStopState):
+            raise ValueError("emergency-stop registry accepts EmergencyStopState values")
         key = (state.institution_id, state.state_version)
         existing = self._states.get(key)
         if existing is not None:
@@ -104,16 +107,20 @@ class EmergencyStopRegistry:
         expected = 1 if not history else history[-1].state_version + 1
         if state.state_version != expected:
             raise ValueError(f"emergency-stop state_version must be contiguous; expected version {expected}")
-        if history and _parse_time("effective_at", state.effective_at) < _parse_time("previous effective_at", history[-1].effective_at):
+        if history and _parse_time("effective_at", state.effective_at) < _parse_time(
+            "previous effective_at", history[-1].effective_at
+        ):
             raise ValueError("new emergency-stop state cannot predate the previous version")
         self._states[key] = state
         return state.artifact_digest
 
     def history(self, institution_id: str) -> tuple[EmergencyStopState, ...]:
-        return tuple(sorted(
-            (state for (scope, _), state in self._states.items() if scope == institution_id),
-            key=lambda state: state.state_version,
-        ))
+        return tuple(
+            sorted(
+                (state for (scope, _), state in self._states.items() if scope == institution_id),
+                key=lambda state: state.state_version,
+            )
+        )
 
     def current(self, institution_id: str) -> EmergencyStopState:
         history = self.history(institution_id)
@@ -126,6 +133,7 @@ class EmergencyStopRegistry:
 class ExecutionLease:
     lease_id: str
     institution_id: str
+    executor_id: str
     request_digest: str
     authenticated_authorization_digest: str
     policy_decision_digest: str
@@ -139,8 +147,8 @@ class ExecutionLease:
     schema_version: str = "regagentops.execution-lease.v1"
 
     def __post_init__(self) -> None:
-        _require_text("lease_id", self.lease_id)
-        _require_text("institution_id", self.institution_id)
+        for name in ("lease_id", "institution_id", "executor_id"):
+            _require_text(name, getattr(self, name))
         for name in (
             "request_digest",
             "authenticated_authorization_digest",
@@ -169,6 +177,7 @@ class ExecutionLease:
 @dataclass(frozen=True, slots=True)
 class ExecutionLeaseConsumption:
     institution_id: str
+    executor_id: str
     lease_digest: str
     request_digest: str
     mcp_registry_snapshot_digest: str
@@ -178,6 +187,7 @@ class ExecutionLeaseConsumption:
 
     def __post_init__(self) -> None:
         _require_text("institution_id", self.institution_id)
+        _require_text("executor_id", self.executor_id)
         for name in (
             "lease_digest",
             "request_digest",
@@ -206,6 +216,7 @@ class ExecutionLeaseLedger:
                 lease_digest TEXT PRIMARY KEY,
                 consumption_digest TEXT NOT NULL UNIQUE,
                 institution_id TEXT NOT NULL,
+                executor_id TEXT NOT NULL,
                 request_digest TEXT NOT NULL,
                 mcp_registry_snapshot_digest TEXT NOT NULL,
                 emergency_stop_state_digest TEXT NOT NULL,
@@ -218,6 +229,8 @@ class ExecutionLeaseLedger:
         self._connection.close()
 
     def consume(self, consumption: ExecutionLeaseConsumption) -> None:
+        if not isinstance(consumption, ExecutionLeaseConsumption):
+            raise ValueError("execution lease ledger accepts ExecutionLeaseConsumption values")
         try:
             self._connection.execute("BEGIN IMMEDIATE")
             self._connection.execute(
@@ -226,16 +239,18 @@ class ExecutionLeaseLedger:
                     lease_digest,
                     consumption_digest,
                     institution_id,
+                    executor_id,
                     request_digest,
                     mcp_registry_snapshot_digest,
                     emergency_stop_state_digest,
                     consumed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     consumption.lease_digest,
                     consumption.artifact_digest,
                     consumption.institution_id,
+                    consumption.executor_id,
                     consumption.request_digest,
                     consumption.mcp_registry_snapshot_digest,
                     consumption.emergency_stop_state_digest,
@@ -249,6 +264,32 @@ class ExecutionLeaseLedger:
         except Exception:
             self._connection.execute("ROLLBACK")
             raise
+
+    def assert_recorded(self, consumption: ExecutionLeaseConsumption) -> None:
+        if not isinstance(consumption, ExecutionLeaseConsumption):
+            raise ValueError("execution receipt requires a typed lease consumption")
+        row = self._connection.execute(
+            """
+            SELECT consumption_digest, institution_id, executor_id, request_digest,
+                   mcp_registry_snapshot_digest, emergency_stop_state_digest, consumed_at
+              FROM execution_lease_consumptions
+             WHERE lease_digest = ?
+            """,
+            (consumption.lease_digest,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("execution lease consumption is not recorded in the append-only ledger")
+        expected = (
+            consumption.artifact_digest,
+            consumption.institution_id,
+            consumption.executor_id,
+            consumption.request_digest,
+            consumption.mcp_registry_snapshot_digest,
+            consumption.emergency_stop_state_digest,
+            consumption.consumed_at,
+        )
+        if tuple(row) != expected:
+            raise ValueError("execution lease consumption does not match the append-only ledger record")
 
     def consumption_count(self) -> int:
         row = self._connection.execute("SELECT COUNT(*) FROM execution_lease_consumptions").fetchone()
@@ -451,7 +492,10 @@ def verify_signed_tool_execution_receipt(
     receipt = signed.receipt
     if trust_bundle.institution_id != receipt.institution_id:
         raise ExecutionReceiptSignatureError("execution trust bundle institution mismatch")
-    matches = [key for key in trust_bundle.keys if key.executor_id == receipt.executor_id and key.key_id == signed.key_id]
+    matches = [
+        key for key in trust_bundle.keys
+        if key.executor_id == receipt.executor_id and key.key_id == signed.key_id
+    ]
     if len(matches) != 1:
         raise ExecutionReceiptSignatureError("execution key must resolve uniquely for the executor")
     key = matches[0]
@@ -465,8 +509,8 @@ def verify_signed_tool_execution_receipt(
     key_end = _parse_time("key not_after", key.not_after)
     if completed > now_dt:
         raise ExecutionReceiptSignatureError("execution receipt completion is in the future")
-    if not (key_start <= completed < key_end and key_start <= now_dt < key_end):
-        raise ExecutionReceiptSignatureError("execution trust key is outside its validity interval")
+    if not (key_start <= completed < key_end):
+        raise ExecutionReceiptSignatureError("execution trust key was not valid when the receipt completed")
     document = execution_receipt_signing_document(receipt, key_id=signed.key_id, algorithm=signed.algorithm)
     if signed.signing_document_digest != digest_artifact(document):
         raise ExecutionReceiptSignatureError("execution receipt signing document digest mismatch")
@@ -507,12 +551,15 @@ class ExecutionGate:
             raise ValueError("DENY decisions cannot produce an execution lease")
         if outcome.result.execution_performed:
             raise ValueError("MCP policy-enforcement result must remain non-executing")
-        if any(value is None for value in (
-            outcome.result.server_registration_digest,
-            outcome.result.tool_snapshot_digest,
-            outcome.result.tool_descriptor_digest,
-            outcome.result.authenticated_authorization_digest,
-        )):
+        if any(
+            value is None
+            for value in (
+                outcome.result.server_registration_digest,
+                outcome.result.tool_snapshot_digest,
+                outcome.result.tool_descriptor_digest,
+                outcome.result.authenticated_authorization_digest,
+            )
+        ):
             raise ValueError("execution requires complete governed MCP and authorization evidence")
 
     def _assert_current_governance(self, outcome: McpPolicyEnforcementOutcome) -> None:
@@ -548,12 +595,18 @@ class ExecutionGate:
         authorization = outcome.authorization
         assert authorization is not None
         request = outcome.request
+        at_dt = _parse_time("lease issue time", at)
+        requirement_start = _parse_time("approval requirement issued_at", requirement.issued_at)
+        requirement_end = _parse_time("approval requirement expires_at", requirement.expires_at)
+        resolution_time = _parse_time("approval evaluated_at", resolution.evaluated_at)
         if requirement.institution_id != request.institution_id:
             raise ValueError("approval requirement institution mismatch")
         if requirement.request_digest != request.artifact_digest:
             raise ValueError("approval requirement request mismatch")
         if requirement.authenticated_authorization_digest != authorization.artifact_digest:
             raise ValueError("approval requirement authorization mismatch")
+        if requirement.identity_context_digest != authorization.identity_context_digest:
+            raise ValueError("approval requirement identity-context mismatch")
         if (
             requirement.requester_id != request.human_owner_id
             or requirement.tool_id != request.tool_id
@@ -562,14 +615,18 @@ class ExecutionGate:
             or requirement.risk_tier is not request.risk_tier
         ):
             raise ValueError("approval requirement scope mismatch")
+        if not (requirement_start <= at_dt < requirement_end):
+            raise ValueError("approval requirement is expired or not yet valid at execution lease issuance")
+        if not (requirement_start <= resolution_time < requirement_end):
+            raise ValueError("approval resolution falls outside the approval requirement validity window")
+        if resolution_time > at_dt:
+            raise ValueError("approval resolution cannot postdate execution lease issuance")
         if resolution.institution_id != request.institution_id or resolution.request_digest != request.artifact_digest:
             raise ValueError("approval resolution request scope mismatch")
         if resolution.requirement_digest != requirement.artifact_digest:
             raise ValueError("approval resolution is bound to a different requirement")
         if not resolution.authorization_continuation_permitted:
             raise ValueError("approval resolution does not permit authorization continuation")
-        if _parse_time("approval evaluated_at", resolution.evaluated_at) > _parse_time("lease issue time", at):
-            raise ValueError("approval resolution cannot postdate execution lease issuance")
         return requirement.artifact_digest, resolution.artifact_digest
 
     def issue_lease(
@@ -577,6 +634,7 @@ class ExecutionGate:
         outcome: McpPolicyEnforcementOutcome,
         *,
         lease_id: str,
+        executor_id: str,
         issued_at: str,
         expires_at: str,
         approval_requirement: ApprovalRequirement | None = None,
@@ -584,11 +642,15 @@ class ExecutionGate:
     ) -> ExecutionLease:
         self._validate_outcome(outcome)
         self._assert_current_governance(outcome)
+        _require_text("executor_id", executor_id)
         authorization = outcome.authorization
         assert authorization is not None
         issue_time = _parse_time("issued_at", issued_at)
-        if issue_time < _parse_time("policy evaluated_at", outcome.result.evaluated_at):
+        evaluated_at = _parse_time("policy evaluated_at", outcome.result.evaluated_at)
+        if issue_time < evaluated_at:
             raise ValueError("execution lease cannot predate policy enforcement")
+        if (issue_time - evaluated_at).total_seconds() > EXECUTION_AUTHORIZATION_MAX_AGE_SECONDS:
+            raise ValueError("authenticated authorization is too old for execution lease issuance")
         stop = self._stops.current(outcome.request.institution_id)
         if _parse_time("emergency-stop effective_at", stop.effective_at) > issue_time:
             raise ValueError("current emergency-stop state is not yet effective")
@@ -603,6 +665,7 @@ class ExecutionGate:
         return ExecutionLease(
             lease_id=lease_id,
             institution_id=outcome.request.institution_id,
+            executor_id=executor_id,
             request_digest=outcome.request.artifact_digest,
             authenticated_authorization_digest=authorization.artifact_digest,
             policy_decision_digest=authorization.authorization.decision_digest,
@@ -617,6 +680,8 @@ class ExecutionGate:
 
     @staticmethod
     def _validate_lease_linkage(lease: ExecutionLease, outcome: McpPolicyEnforcementOutcome) -> None:
+        if not isinstance(lease, ExecutionLease):
+            raise ValueError("execution boundary requires an ExecutionLease")
         ExecutionGate._validate_outcome(outcome)
         authorization = outcome.authorization
         assert authorization is not None
@@ -640,11 +705,13 @@ class ExecutionGate:
         lease: ExecutionLease,
         outcome: McpPolicyEnforcementOutcome,
         *,
+        executor_id: str,
         consumed_at: str,
     ) -> ExecutionLeaseConsumption:
-        if not isinstance(lease, ExecutionLease):
-            raise ValueError("execution redemption requires an ExecutionLease")
         self._validate_lease_linkage(lease, outcome)
+        _require_text("executor_id", executor_id)
+        if executor_id != lease.executor_id:
+            raise ValueError("execution lease is bound to a different executor")
         self._assert_current_governance(outcome)
         consumed = _parse_time("consumed_at", consumed_at)
         if consumed < _parse_time("issued_at", lease.issued_at) or consumed >= _parse_time("expires_at", lease.expires_at):
@@ -661,6 +728,7 @@ class ExecutionGate:
             raise ValueError("MCP governance state changed after execution lease issuance")
         consumption = ExecutionLeaseConsumption(
             institution_id=lease.institution_id,
+            executor_id=lease.executor_id,
             lease_digest=lease.artifact_digest,
             request_digest=lease.request_digest,
             mcp_registry_snapshot_digest=current_registry,
@@ -687,14 +755,18 @@ class ExecutionGate:
         if not isinstance(request, AgentActionEnvelope) or request.artifact_digest != outcome.request.artifact_digest:
             raise ValueError("execution receipt requires the exact authorized request")
         self._validate_lease_linkage(lease, outcome)
-        if consumption.institution_id != lease.institution_id:
-            raise ValueError("execution lease consumption institution mismatch")
+        _require_text("executor_id", executor_id)
+        if executor_id != lease.executor_id:
+            raise ValueError("execution receipt executor does not match the execution lease")
+        if consumption.institution_id != lease.institution_id or consumption.executor_id != lease.executor_id:
+            raise ValueError("execution lease consumption institution/executor mismatch")
         if consumption.lease_digest != lease.artifact_digest or consumption.request_digest != request.artifact_digest:
             raise ValueError("execution lease consumption is bound to a different lease or request")
         if consumption.mcp_registry_snapshot_digest != lease.mcp_registry_snapshot_digest:
             raise ValueError("execution lease consumption MCP snapshot mismatch")
         if consumption.emergency_stop_state_digest != lease.emergency_stop_state_digest:
             raise ValueError("execution lease consumption emergency-stop mismatch")
+        self._ledger.assert_recorded(consumption)
         consumed = _parse_time("consumed_at", consumption.consumed_at)
         started = _parse_time("started_at", started_at)
         completed = _parse_time("completed_at", completed_at)
@@ -709,7 +781,7 @@ class ExecutionGate:
         return ToolExecutionReceipt(
             receipt_id=receipt_id,
             institution_id=request.institution_id,
-            executor_id=executor_id,
+            executor_id=lease.executor_id,
             request_digest=request.artifact_digest,
             tool_id=request.tool_id,
             action=request.action,
