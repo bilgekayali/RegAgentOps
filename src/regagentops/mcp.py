@@ -12,6 +12,7 @@ from .models import (
     AgentActionEnvelope,
     DataClassification,
     Decision,
+    RiskTier,
     ToolActionDescriptor,
     _require_text,
     _require_utc_timestamp,
@@ -24,6 +25,7 @@ _HEX_64 = re.compile(r"^[0-9a-f]{64}$")
 _MCP_TOOL_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 MCP_MAX_TOOLS_PER_SNAPSHOT = 128
 MCP_TOOL_ACTION = "invoke"
+_HIGH_IMPACT_RISKS = {RiskTier.HIGH, RiskTier.CRITICAL}
 
 
 def _require_digest(name: str, value: str | None, *, optional: bool = False) -> None:
@@ -46,6 +48,12 @@ def _require_bool(name: str, value: bool) -> None:
 def _parse_time(value: str) -> datetime:
     _require_utc_timestamp("timestamp", value)
     return datetime.fromisoformat(value[:-1] + "+00:00")
+
+
+def _approval_gate_required(decision: Decision, risk_tier: RiskTier, policy_requires_approval: bool) -> bool:
+    if decision is Decision.DENY:
+        return False
+    return policy_requires_approval or risk_tier in _HIGH_IMPACT_RISKS
 
 
 class McpTransportProfile(str, Enum):
@@ -207,6 +215,7 @@ class McpPolicyEnforcementResult:
     tool_descriptor_digest: str | None
     authenticated_authorization_digest: str | None
     identity_verified: bool
+    risk_tier: RiskTier
     decision: Decision
     constraints: tuple[str, ...]
     reason_codes: tuple[str, ...]
@@ -228,6 +237,8 @@ class McpPolicyEnforcementResult:
         ):
             _require_digest(name, getattr(self, name), optional=True)
         _require_bool("identity_verified", self.identity_verified)
+        if not isinstance(self.risk_tier, RiskTier):
+            raise ValueError("risk_tier must be a governed RiskTier")
         if not isinstance(self.decision, Decision):
             raise ValueError("decision must be a governed Decision")
         if len(set(self.constraints)) != len(self.constraints):
@@ -250,11 +261,15 @@ class McpPolicyEnforcementResult:
         if self.decision is Decision.DENY:
             if self.human_approval_required or self.execution_permitted:
                 raise ValueError("DENY cannot require human approval or permit execution")
-        elif self.decision is Decision.REQUIRE_HUMAN_APPROVAL:
-            if not self.human_approval_required or self.execution_permitted:
-                raise ValueError("REQUIRE_HUMAN_APPROVAL must require approval and cannot yet permit execution")
-        elif self.human_approval_required:
-            raise ValueError("non-approval decisions cannot require human approval")
+        else:
+            if not self.identity_verified or self.authenticated_authorization_digest is None:
+                raise ValueError("non-DENY MCP continuation requires verified authenticated authorization")
+            expected_approval = self.decision is Decision.REQUIRE_HUMAN_APPROVAL or self.risk_tier in _HIGH_IMPACT_RISKS
+            if self.human_approval_required != expected_approval:
+                raise ValueError("MCP approval flag is inconsistent with policy decision and risk tier")
+            expected_permitted = self.decision in {Decision.ALLOW, Decision.ALLOW_WITH_CONSTRAINTS} and not expected_approval
+            if self.execution_permitted != expected_permitted:
+                raise ValueError("MCP execution continuation is inconsistent with approval gate state")
         _require_utc_timestamp("evaluated_at", self.evaluated_at)
         _require_text("schema_version", self.schema_version)
 
@@ -265,13 +280,22 @@ class McpPolicyEnforcementResult:
 
 @dataclass(frozen=True, slots=True)
 class McpPolicyEnforcementOutcome:
+    request: AgentActionEnvelope
     result: McpPolicyEnforcementResult
     authorization: AuthenticatedAuthorizationDecision | None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.request, AgentActionEnvelope):
+            raise ValueError("MCP policy enforcement outcome requires the exact request artifact")
+        if self.request.artifact_digest != self.result.request_digest:
+            raise ValueError("MCP result is bound to a different request")
+        if self.request.risk_tier is not self.result.risk_tier:
+            raise ValueError("MCP result risk tier does not match the bound request")
         if self.authorization is None:
             if self.result.authenticated_authorization_digest is not None:
                 raise ValueError("missing authorization object for represented authorization digest")
+            if self.result.decision is not Decision.DENY:
+                raise ValueError("MCP precondition failure without authorization must be DENY")
             return
         if self.result.authenticated_authorization_digest != self.authorization.artifact_digest:
             raise ValueError("MCP result is bound to a different authenticated authorization")
@@ -281,8 +305,16 @@ class McpPolicyEnforcementOutcome:
             raise ValueError("MCP result and authenticated authorization decisions must match")
         if self.authorization.authorization.constraints != self.result.constraints:
             raise ValueError("MCP result constraints must match authenticated authorization")
-        if self.authorization.authorization.human_approval_required != self.result.human_approval_required:
-            raise ValueError("MCP result approval flag must match authenticated authorization")
+        expected_approval = _approval_gate_required(
+            self.authorization.decision,
+            self.request.risk_tier,
+            self.authorization.authorization.human_approval_required,
+        )
+        if self.result.human_approval_required != expected_approval:
+            raise ValueError("MCP result approval gate state does not match authorization and request risk")
+        expected_permitted = self.authorization.authorization.policy_permits_execution and not expected_approval
+        if self.result.execution_permitted != expected_permitted:
+            raise ValueError("MCP result continuation permission does not match approval gate state")
 
 
 class McpGovernanceRegistry:
@@ -543,6 +575,7 @@ class McpPolicyEnforcementPoint:
                 tool_descriptor_digest=descriptor_digest,
                 authenticated_authorization_digest=None,
                 identity_verified=False,
+                risk_tier=request.risk_tier,
                 decision=Decision.DENY,
                 constraints=(),
                 reason_codes=(reason,),
@@ -551,7 +584,7 @@ class McpPolicyEnforcementPoint:
                 execution_performed=False,
                 evaluated_at=evaluated_at,
             )
-            return McpPolicyEnforcementOutcome(result, None)
+            return McpPolicyEnforcementOutcome(request, result, None)
 
         authorization = AuthenticatedPolicyEngine(self._agents, tools).evaluate(
             request,
@@ -559,6 +592,11 @@ class McpPolicyEnforcementPoint:
             identity,
             identity_trust_bundle=identity_trust_bundle,
             evaluated_at=evaluated_at,
+        )
+        approval_required = _approval_gate_required(
+            authorization.decision,
+            request.risk_tier,
+            authorization.authorization.human_approval_required,
         )
         result = McpPolicyEnforcementResult(
             institution_id=request.institution_id,
@@ -569,12 +607,13 @@ class McpPolicyEnforcementPoint:
             tool_descriptor_digest=descriptor_digest,
             authenticated_authorization_digest=authorization.artifact_digest,
             identity_verified=authorization.identity_verified,
+            risk_tier=request.risk_tier,
             decision=authorization.decision,
             constraints=authorization.authorization.constraints,
             reason_codes=authorization.authorization.reason_codes,
-            human_approval_required=authorization.authorization.human_approval_required,
-            execution_permitted=authorization.authorization.policy_permits_execution,
+            human_approval_required=approval_required,
+            execution_permitted=authorization.authorization.policy_permits_execution and not approval_required,
             execution_performed=False,
             evaluated_at=evaluated_at,
         )
-        return McpPolicyEnforcementOutcome(result, authorization)
+        return McpPolicyEnforcementOutcome(request, result, authorization)
