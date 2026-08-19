@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RegAgentOps Assurance Crosswalk Entry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["entry_id","institution_id","scope_digest","framework","framework_version","reference_id","applicability_assertion_digest","coverage","evidence_reference_digests","mapping_rationale","mapped_by_human_id","mapped_at","schema_version"],
+  "properties": {
+    "entry_id": {"type":"string","minLength":1,"maxLength":256},
+    "institution_id": {"type":"string","minLength":1,"maxLength":256},
+    "scope_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "framework": {"enum":["nist_ai_rmf","iso_iec_42001","eu_ai_act"]},
+    "framework_version": {"type":"string","minLength":1,"maxLength":64},
+    "reference_id": {"type":"string","minLength":1,"maxLength":256},
+    "applicability_assertion_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "coverage": {"enum":["supported","partial","gap","not_applicable"]},
+    "evidence_reference_digests": {
+      "type":"array",
+      "uniqueItems":true,
+      "items":{"type":"string","pattern":"^[0-9a-f]{64}$"}
+    },
+    "mapping_rationale": {"type":"string","minLength":1,"maxLength":1024},
+    "mapped_by_human_id": {"type":"string","minLength":1,"maxLength":256},
+    "mapped_at": {"type":"string","format":"date-time","pattern":"Z$"},
+    "schema_version": {"const":"regagentops.assurance-crosswalk-entry.v1"}
+  },
+  "allOf": [
+    {
+      "if": {"properties":{"framework":{"const":"nist_ai_rmf"}},"required":["framework"]},
+      "then": {"properties":{"framework_version":{"const":"1.0"}}}
+    },
+    {
+      "if": {"properties":{"framework":{"const":"iso_iec_42001"}},"required":["framework"]},
+      "then": {"properties":{"framework_version":{"const":"2023"}}}
+    },
+    {
+      "if": {"properties":{"framework":{"const":"eu_ai_act"}},"required":["framework"]},
+      "then": {"properties":{"framework_version":{"const":"2024/1689"}}}
+    },
+    {
+      "if": {"properties":{"coverage":{"enum":["supported","partial"]}},"required":["coverage"]},
+      "then": {"properties":{"evidence_reference_digests":{"minItems":1}}}
+    },
+    {
+      "if": {"properties":{"coverage":{"enum":["gap","not_applicable"]}},"required":["coverage"]},
+      "then": {"properties":{"evidence_reference_digests":{"maxItems":0}}}
+    }
+  ]
+}

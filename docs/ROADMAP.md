@@ -74,10 +74,19 @@ RegAgentOps evolves from an offline authorization core into a production-referen
 
 ## v0.7.0 — Assurance Evidence
 
-- [ ] NIST AI RMF evidence crosswalk;
-- [ ] ISO/IEC 42001 governance evidence mapping;
-- [ ] EU AI Act deployment-role evidence mapping;
-- [ ] human-confirmed applicability and explicit non-certification semantics.
+- [x] exact assurance scope for institution/system/deployment/context evidence with append-only context history;
+- [x] NIST AI RMF 1.0 evidence crosswalk with explicit framework-version pinning;
+- [x] ISO/IEC 42001:2023 governance evidence mapping without conformity/certification claims;
+- [x] EU AI Act Regulation (EU) 2024/1689 evidence mapping with human-confirmed operator roles;
+- [x] mandatory human-confirmed applicability and mapping rationale;
+- [x] one immutable applicability assertion per exact scope/framework/version/reference;
+- [x] `SUPPORTED`, `PARTIAL`, `GAP`, `NOT_APPLICABLE` evidence coverage semantics;
+- [x] one immutable crosswalk entry per exact applicability assertion;
+- [x] exact assertion/evidence/crosswalk digest linkage and cross-scope substitution rejection;
+- [x] monotonic scope → applicability/evidence → crosswalk → package chronology;
+- [x] immutable institution/package identity and duplicate-entry rejection;
+- [x] evidence-package verification with explicit non-certification, non-conformity and non-legal-determination semantics;
+- [x] strict assurance JSON contracts, adversarial tests and dedicated assurance CI boundary.
 
 ## v0.8.0 — Tenant and Cryptographic Hardening
 
