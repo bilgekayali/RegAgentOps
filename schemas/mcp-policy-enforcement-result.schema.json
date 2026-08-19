@@ -3,7 +3,7 @@
   "title": "RegAgentOps MCP Policy Enforcement Result",
   "type": "object",
   "additionalProperties": false,
-  "required": ["institution_id","request_digest","mcp_registry_snapshot_digest","server_registration_digest","tool_snapshot_digest","tool_descriptor_digest","authenticated_authorization_digest","identity_verified","decision","constraints","reason_codes","human_approval_required","execution_permitted","execution_performed","evaluated_at","schema_version"],
+  "required": ["institution_id","request_digest","mcp_registry_snapshot_digest","server_registration_digest","tool_snapshot_digest","tool_descriptor_digest","authenticated_authorization_digest","identity_verified","risk_tier","decision","constraints","reason_codes","human_approval_required","execution_permitted","execution_performed","evaluated_at","schema_version"],
   "properties": {
     "institution_id": {"type":"string","minLength":1,"maxLength":256},
     "request_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
@@ -13,6 +13,7 @@
     "tool_descriptor_digest": {"oneOf":[{"type":"string","pattern":"^[0-9a-f]{64}$"},{"type":"null"}]},
     "authenticated_authorization_digest": {"oneOf":[{"type":"string","pattern":"^[0-9a-f]{64}$"},{"type":"null"}]},
     "identity_verified": {"type":"boolean"},
+    "risk_tier": {"enum":["low","moderate","high","critical"]},
     "decision": {"enum":["ALLOW","DENY","REQUIRE_HUMAN_APPROVAL","ALLOW_WITH_CONSTRAINTS"]},
     "constraints": {"type":"array","uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":256}},
     "reason_codes": {"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":256}},
@@ -24,20 +25,34 @@
   },
   "allOf": [
     {
-      "if": {"properties":{"decision":{"const":"ALLOW_WITH_CONSTRAINTS"}},"required":["decision"]},
-      "then": {"properties":{"constraints":{"minItems":1},"human_approval_required":{"const":false},"execution_permitted":{"const":true}}}
-    },
-    {
       "if": {"properties":{"decision":{"const":"DENY"}},"required":["decision"]},
       "then": {"properties":{"constraints":{"maxItems":0},"human_approval_required":{"const":false},"execution_permitted":{"const":false}}}
     },
     {
       "if": {"properties":{"decision":{"const":"REQUIRE_HUMAN_APPROVAL"}},"required":["decision"]},
-      "then": {"properties":{"constraints":{"maxItems":0},"human_approval_required":{"const":true},"execution_permitted":{"const":false}}}
+      "then": {"properties":{"constraints":{"maxItems":0},"identity_verified":{"const":true},"authenticated_authorization_digest":{"type":"string","pattern":"^[0-9a-f]{64}$"},"human_approval_required":{"const":true},"execution_permitted":{"const":false}}}
     },
     {
       "if": {"properties":{"decision":{"const":"ALLOW"}},"required":["decision"]},
-      "then": {"properties":{"constraints":{"maxItems":0},"human_approval_required":{"const":false},"execution_permitted":{"const":true}}}
+      "then": {
+        "properties":{"constraints":{"maxItems":0},"identity_verified":{"const":true},"authenticated_authorization_digest":{"type":"string","pattern":"^[0-9a-f]{64}$"}},
+        "allOf":[{
+          "if":{"properties":{"risk_tier":{"enum":["high","critical"]}},"required":["risk_tier"]},
+          "then":{"properties":{"human_approval_required":{"const":true},"execution_permitted":{"const":false}}},
+          "else":{"properties":{"human_approval_required":{"const":false},"execution_permitted":{"const":true}}}
+        }]
+      }
+    },
+    {
+      "if": {"properties":{"decision":{"const":"ALLOW_WITH_CONSTRAINTS"}},"required":["decision"]},
+      "then": {
+        "properties":{"constraints":{"minItems":1},"identity_verified":{"const":true},"authenticated_authorization_digest":{"type":"string","pattern":"^[0-9a-f]{64}$"}},
+        "allOf":[{
+          "if":{"properties":{"risk_tier":{"enum":["high","critical"]}},"required":["risk_tier"]},
+          "then":{"properties":{"human_approval_required":{"const":true},"execution_permitted":{"const":false}}},
+          "else":{"properties":{"human_approval_required":{"const":false},"execution_permitted":{"const":true}}}
+        }]
+      }
     }
   ]
 }
