@@ -14,7 +14,10 @@ from regagentops.deployment import (
     ToolDispatchBinding,
     UpgradePlan,
 )
+from regagentops.hardening import PostgresRlsPolicy, TenantIsolationProfile, TenantIsolationRegistry
+from regagentops.models import Environment
 
+T_MINUS = "2026-08-19T14:29:00Z"
 T0 = "2026-08-19T14:30:00Z"
 T1 = "2026-08-19T14:31:00Z"
 T2 = "2026-08-19T14:32:00Z"
@@ -24,13 +27,41 @@ T4 = "2026-08-19T14:34:00Z"
 
 class ProductionReferenceDeploymentTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.registry = ProductionDeploymentRegistry()
+        self.tenant_registry = TenantIsolationRegistry()
+        self.rls = self.make_rls()
+        self.tenant_registry.register_policy(self.rls)
+        self.tenant_profile = TenantIsolationProfile(
+            institution_id="bank-demo",
+            tenant_id="tenant-a",
+            profile_version=1,
+            environment=Environment.PRODUCTION,
+            database_role="regagentops_worker",
+            rls_policy_digests=(self.rls.artifact_digest,),
+            registered_at=T0,
+        )
+        self.tenant_registry.register_profile(self.tenant_profile)
+        self.registry = ProductionDeploymentRegistry(tenant_isolation_registry=self.tenant_registry)
         self.egress = self.make_egress()
         self.tools = self.make_tools()
         self.registry.register_egress_policy(self.egress)
         self.registry.register_tool_allowlist(self.tools)
         self.worker = self.make_worker()
         self.registry.register_worker_profile(self.worker)
+
+    def make_rls(self, *, version=1, registered_at=T0):
+        return PostgresRlsPolicy(
+            institution_id="bank-demo",
+            policy_id="tenant-rls",
+            policy_version=version,
+            table_name="governance_evidence",
+            policy_name="tenant_guard",
+            institution_column="institution_id",
+            tenant_column="tenant_id",
+            institution_setting="regagentops.institution_id",
+            tenant_setting="regagentops.tenant_id",
+            force_row_level_security=True,
+            registered_at=registered_at,
+        )
 
     def make_egress(self, *, version=1, registered_at=T0, host="kms.bank.example"):
         destinations = (
@@ -71,7 +102,16 @@ class ProductionReferenceDeploymentTests(unittest.TestCase):
             registered_at=registered_at,
         )
 
-    def make_worker(self, *, version=1, registered_at=T0, egress_digest=None, tools_digest=None, tenant_id="tenant-a"):
+    def make_worker(
+        self,
+        *,
+        version=1,
+        registered_at=T0,
+        egress_digest=None,
+        tools_digest=None,
+        tenant_profile_digest=None,
+        tenant_id="tenant-a",
+    ):
         return IsolatedPolicyWorkerProfile(
             institution_id="bank-demo",
             tenant_id=tenant_id,
@@ -80,7 +120,7 @@ class ProductionReferenceDeploymentTests(unittest.TestCase):
             service_account_id="regagentops-policy-worker",
             egress_policy_digest=egress_digest or self.egress.artifact_digest,
             tool_allowlist_policy_digest=tools_digest or self.tools.artifact_digest,
-            tenant_isolation_profile_digest="4" * 64,
+            tenant_isolation_profile_digest=tenant_profile_digest or self.tenant_profile.artifact_digest,
             network_namespace_isolated=True,
             run_as_non_root=True,
             read_only_root_filesystem=True,
@@ -129,6 +169,17 @@ class ProductionReferenceDeploymentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "forbid plaintext"):
             replace(self.egress, allow_plaintext=True)
 
+    def test_egress_rejects_noncanonical_ip_alias(self):
+        with self.assertRaisesRegex(ValueError, "canonical textual form"):
+            EgressDestination(
+                destination_id="ipv6-alias",
+                protocol=EgressProtocol.TLS,
+                host="2001:0db8::1",
+                port=443,
+                purpose="Must not bypass exact endpoint identity by textual IP aliasing",
+                trust_policy_digest="a" * 64,
+            )
+
     def test_tool_allowlist_is_default_deny_and_one_executor_per_tool(self):
         with self.assertRaisesRegex(ValueError, "default deny"):
             replace(self.tools, default_deny=False)
@@ -140,7 +191,15 @@ class ProductionReferenceDeploymentTests(unittest.TestCase):
             governance_binding_digest="a" * 64,
         )
         with self.assertRaisesRegex(ValueError, "only one executor"):
-            replace(self.tools, bindings=tuple(sorted(self.tools.bindings + (duplicate,), key=lambda item: (item.governed_tool_id, item.executor_id, item.governance_binding_digest))))
+            replace(
+                self.tools,
+                bindings=tuple(
+                    sorted(
+                        self.tools.bindings + (duplicate,),
+                        key=lambda item: (item.governed_tool_id, item.executor_id, item.governance_binding_digest),
+                    )
+                ),
+            )
 
     def test_worker_profile_requires_hard_isolation_and_exact_current_policies(self):
         with self.assertRaisesRegex(ValueError, "run_as_non_root=true"):
@@ -161,6 +220,16 @@ class ProductionReferenceDeploymentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown tenant egress"):
             self.registry.register_worker_profile(foreign)
 
+    def test_worker_profile_requires_exact_current_tenant_isolation(self):
+        wrong = self.make_worker(tenant_profile_digest="f" * 64)
+        with self.assertRaisesRegex(ValueError, "current tenant isolation"):
+            self.registry.register_worker_profile(wrong)
+
+    def test_worker_profile_cannot_predate_bound_policies(self):
+        backdated = self.make_worker(version=2, registered_at=T_MINUS)
+        with self.assertRaisesRegex(ValueError, "cannot predate its current deployment policies"):
+            self.registry.register_worker_profile(backdated)
+
     def test_release_binds_codeql_provenance_checksum_and_strict_commit(self):
         release = self.make_release("release-080", "0.8.0", T1)
         self.registry.register_release(release)
@@ -171,6 +240,11 @@ class ProductionReferenceDeploymentTests(unittest.TestCase):
             replace(release, release_id="bad-commit", source_commit_sha="not-a-sha")
         with self.assertRaisesRegex(ValueError, "strict MAJOR.MINOR.PATCH"):
             replace(release, release_id="bad-version", release_version="v0.8")
+
+    def test_release_cannot_predate_worker_profile(self):
+        release = self.make_release("release-backdated", "0.8.0", T_MINUS)
+        with self.assertRaisesRegex(ValueError, "cannot predate its worker profile"):
+            self.registry.register_release(release)
 
     def test_release_versions_are_monotonic_and_immutable(self):
         old = self.make_release("release-080", "0.8.0", T1)
@@ -186,6 +260,26 @@ class ProductionReferenceDeploymentTests(unittest.TestCase):
         self.registry.assert_release_current(release)
         self.registry.register_egress_policy(self.make_egress(version=2, registered_at=T2, host="kms2.bank.example"))
         with self.assertRaisesRegex(ValueError, "egress policy is stale"):
+            self.registry.assert_release_current(release)
+
+    def test_release_currentness_fails_closed_after_tenant_isolation_drift(self):
+        release = self.make_release("release-080", "0.8.0", T1)
+        self.registry.register_release(release)
+        self.registry.assert_release_current(release)
+
+        rls_v2 = self.make_rls(version=2, registered_at=T2)
+        self.tenant_registry.register_policy(rls_v2)
+        profile_v2 = TenantIsolationProfile(
+            institution_id="bank-demo",
+            tenant_id="tenant-a",
+            profile_version=2,
+            environment=Environment.PRODUCTION,
+            database_role="regagentops_worker",
+            rls_policy_digests=(rls_v2.artifact_digest,),
+            registered_at=T2,
+        )
+        self.tenant_registry.register_profile(profile_v2)
+        with self.assertRaisesRegex(ValueError, "tenant isolation profile is stale"):
             self.registry.assert_release_current(release)
 
     def test_upgrade_requires_exact_reverse_rollback_and_newer_target(self):
