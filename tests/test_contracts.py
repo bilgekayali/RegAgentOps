@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ContractTests(unittest.TestCase):
     def test_package_version(self):
-        self.assertEqual(regagentops.__version__, "0.8.0")
+        self.assertEqual(regagentops.__version__, "0.9.0")
 
     def test_json_schemas_are_parseable_and_version_pinned(self):
         expected = {
@@ -63,6 +63,13 @@ class ContractTests(unittest.TestCase):
             "audit-anchor-batch.schema.json": "regagentops.audit-anchor-batch.v1",
             "external-audit-anchor-receipt.schema.json": "regagentops.external-audit-anchor-receipt.v1",
             "audit-anchor-record.schema.json": "regagentops.audit-anchor-record.v1",
+            "egress-policy.schema.json": "regagentops.egress-policy.v1",
+            "tool-allowlist-policy.schema.json": "regagentops.tool-allowlist-policy.v1",
+            "isolated-policy-worker-profile.schema.json": "regagentops.isolated-policy-worker-profile.v1",
+            "deployment-release-manifest.schema.json": "regagentops.deployment-release-manifest.v1",
+            "rollback-plan.schema.json": "regagentops.rollback-plan.v1",
+            "upgrade-plan.schema.json": "regagentops.upgrade-plan.v1",
+            "recovery-checkpoint.schema.json": "regagentops.recovery-checkpoint.v1",
         }
         for filename, discriminator in expected.items():
             payload = json.loads((ROOT / "schemas" / filename).read_text(encoding="utf-8"))
@@ -95,6 +102,24 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(lifecycle["properties"]["status"]["enum"], ["active", "retired", "disabled"])
         encrypted = json.loads((ROOT / "schemas" / "encrypted-governance-evidence.schema.json").read_text())
         self.assertEqual(encrypted["properties"]["algorithm"]["const"], "AES-256-GCM")
+
+    def test_deployment_contracts_pin_default_deny_worker_isolation_and_release_evidence(self):
+        egress = json.loads((ROOT / "schemas" / "egress-policy.schema.json").read_text())
+        self.assertTrue(egress["properties"]["default_deny"]["const"])
+        self.assertFalse(egress["properties"]["allow_wildcards"]["const"])
+        self.assertFalse(egress["properties"]["allow_plaintext"]["const"])
+        tools = json.loads((ROOT / "schemas" / "tool-allowlist-policy.schema.json").read_text())
+        self.assertTrue(tools["properties"]["default_deny"]["const"])
+        self.assertFalse(tools["properties"]["direct_tool_invocation_allowed"]["const"])
+        worker = json.loads((ROOT / "schemas" / "isolated-policy-worker-profile.schema.json").read_text())
+        self.assertTrue(worker["properties"]["run_as_non_root"]["const"])
+        self.assertTrue(worker["properties"]["read_only_root_filesystem"]["const"])
+        self.assertTrue(worker["properties"]["drop_all_linux_capabilities"]["const"])
+        self.assertEqual(worker["properties"]["seccomp_profile"]["const"], "RuntimeDefault")
+        self.assertFalse(worker["properties"]["direct_tool_invocation"]["const"])
+        release = json.loads((ROOT / "schemas" / "deployment-release-manifest.schema.json").read_text())
+        for field in ("codeql_evidence_digest", "provenance_attestation_digest", "checksum_manifest_digest"):
+            self.assertIn(field, release["required"])
 
     def test_demo_cli_is_offline_and_non_executing(self):
         completed = subprocess.run(
