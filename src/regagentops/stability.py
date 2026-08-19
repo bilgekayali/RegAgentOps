@@ -183,7 +183,9 @@ class BoundaryEvidenceReference:
 class SupportedUpgradePath:
     path_id: str
     source_series: str
+    source_release_digest: str
     target_version: str
+    target_release_digest: str
     migration_plan_digest: str
     preflight_check_digest: str
     post_upgrade_check_digest: str
@@ -199,9 +201,13 @@ class SupportedUpgradePath:
             _require_text(name, getattr(self, name))
         if self.source_series != SUPPORTED_UPGRADE_SOURCE_SERIES:
             raise ValueError("v1 supported upgrade source must be final 0.9.x series")
+        _require_digest("source_release_digest", self.source_release_digest)
         _require_semver("target_version", self.target_version)
         if self.target_version != STABLE_VERSION:
             raise ValueError("v1 supported upgrade target must be 1.0.0")
+        _require_digest("target_release_digest", self.target_release_digest)
+        if self.source_release_digest == self.target_release_digest:
+            raise ValueError("supported upgrade source and target releases must differ")
         for name in (
             "migration_plan_digest",
             "preflight_check_digest",
@@ -388,6 +394,7 @@ class StableReleaseRegistry:
         *,
         compatibility_policy: StableCompatibilityPolicy,
         public_surface: PublicSurfaceManifest,
+        source_release: DeploymentReleaseManifest,
         production_release: DeploymentReleaseManifest,
         upgrade_path: SupportedUpgradePath,
         security_review: IndependentSecurityReviewChecklist,
@@ -405,10 +412,17 @@ class StableReleaseRegistry:
             raise ValueError("public surface does not bind exact compatibility policy")
         if public_surface.artifact_digest != baseline.public_surface_manifest_digest:
             raise ValueError("stable baseline public surface digest mismatch")
+        if not source_release.release_version.startswith("0.9."):
+            raise ValueError("stable upgrade source release must belong to 0.9.x")
+        if upgrade_path.source_release_digest != source_release.artifact_digest:
+            raise ValueError("supported upgrade path source release digest mismatch")
+        self._production.assert_release_current(source_release)
         if production_release.release_version != STABLE_VERSION:
             raise ValueError("stable baseline requires a production release manifest for 1.0.0")
         if production_release.artifact_digest != baseline.production_release_manifest_digest:
             raise ValueError("stable baseline production release digest mismatch")
+        if upgrade_path.target_release_digest != production_release.artifact_digest:
+            raise ValueError("supported upgrade path target release digest mismatch")
         self._production.assert_release_current(production_release)
         if upgrade_path.artifact_digest != baseline.supported_upgrade_path_digest:
             raise ValueError("stable baseline upgrade path digest mismatch")
