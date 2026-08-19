@@ -3,10 +3,11 @@
   "title": "RegAgentOps Execution Lease",
   "type": "object",
   "additionalProperties": false,
-  "required": ["lease_id","institution_id","request_digest","authenticated_authorization_digest","policy_decision_digest","mcp_policy_enforcement_result_digest","mcp_registry_snapshot_digest","approval_requirement_digest","approval_resolution_digest","emergency_stop_state_digest","issued_at","expires_at","schema_version"],
+  "required": ["lease_id","institution_id","executor_id","request_digest","authenticated_authorization_digest","policy_decision_digest","mcp_policy_enforcement_result_digest","mcp_registry_snapshot_digest","approval_requirement_digest","approval_resolution_digest","emergency_stop_state_digest","issued_at","expires_at","schema_version"],
   "properties": {
     "lease_id": {"type":"string","minLength":1,"maxLength":256},
     "institution_id": {"type":"string","minLength":1,"maxLength":256},
+    "executor_id": {"type":"string","minLength":1,"maxLength":256},
     "request_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
     "authenticated_authorization_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
     "policy_decision_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
