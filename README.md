@@ -24,7 +24,6 @@ The project is designed for regulated and high-assurance environments. It is **n
 
 ```text
 AUTHORIZATION / EXECUTION
-
 OIDC + workload identity
           |
 AgentActionEnvelope + PolicyBundle + MCP binding + DataUseDeclaration
@@ -38,13 +37,11 @@ current MCP + data + emergency-stop checks
 one-time ExecutionLease -> external executor -> SignedToolExecutionReceipt
 
 ASSURANCE
-
 existing governance/evidence -> AssuranceScope
           |
 human applicability -> exact evidence crosswalk -> AssuranceEvidencePackage
 
 TENANT / CRYPTO HARDENING
-
 PostgreSQL RLS refs + tenant profile
 KMS/HSM key refs + append-only lifecycle
 signed configuration changes
@@ -52,7 +49,7 @@ AES-256-GCM evidence envelopes
 external audit-anchor receipts
 
 PRODUCTION REFERENCE
-
+current v0.8 tenant-isolation profile
 exact default-deny egress + tool allowlist
           |
 isolated non-invoking policy-worker profile
@@ -73,21 +70,23 @@ No v0.7-v0.9 assurance/hardening/deployment artefact can widen an authorization 
 
 ### Isolated policy-enforcement worker
 
-`IsolatedPolicyWorkerProfile` requires an isolated network namespace, non-root execution, read-only root filesystem, no-new-privileges, all Linux capabilities dropped, `RuntimeDefault` seccomp, no privileged/host namespaces and **no direct tool invocation**. The profile binds exact current tenant egress/tool policies and the v0.8 tenant-isolation profile digest.
+`IsolatedPolicyWorkerProfile` requires isolated network namespace, non-root execution, read-only root filesystem, no-new-privileges, all Linux capabilities dropped, `RuntimeDefault` seccomp, no privileged/host namespaces and **no direct tool invocation**.
+
+`ProductionDeploymentRegistry` receives the v0.8 `TenantIsolationRegistry`. Worker registration must bind the exact **current** tenant-isolation profile together with exact current tenant egress/tool policies; a foreign, unknown or superseded tenant profile fails closed. Worker timestamps cannot predate those dependencies.
 
 These are reference requirements. RegAgentOps does not deploy a container or independently prove that a runtime applied them.
 
 ### Strict egress and tool allowlisting
 
-`EgressPolicy` is tenant-scoped, append-only, versioned and always default deny. It permits only exact `https`/`tls` host+port destinations, forbids wildcard destinations and plaintext transport, and binds external trust-policy evidence.
+`EgressPolicy` is tenant-scoped, append-only, versioned and always default deny. It permits only exact `https`/`tls` host+port destinations, forbids wildcard destinations and plaintext transport, binds external trust-policy evidence, and requires canonical textual form for IP endpoints so equivalent IP aliases cannot bypass exact endpoint identity.
 
 `ToolAllowlistPolicy` is also default deny. One governed tool can map to one exact external executor per policy version. The policy worker itself remains non-invoking.
 
 ### Release and currentness evidence
 
-`DeploymentReleaseManifest` binds strict semantic version, exact source Git SHA, artifact SHA-256, worker/configuration digest, CodeQL evidence digest, provenance-attestation digest and checksum-manifest digest.
+`DeploymentReleaseManifest` binds strict semantic version, exact source Git SHA, artifact SHA-256, worker/configuration digest, CodeQL evidence digest, provenance-attestation digest and checksum-manifest digest. A release cannot predate its worker profile.
 
-`ProductionDeploymentRegistry.assert_release_current()` fails closed if the bound worker, egress policy or tool allowlist has been superseded. A policy change therefore requires a new worker/release binding rather than silently reusing stale release evidence.
+`ProductionDeploymentRegistry.assert_release_current()` fails closed if the bound worker profile, egress policy, tool allowlist **or v0.8 tenant-isolation profile** has been superseded. Policy/RLS changes therefore require a new worker/release binding rather than silently reusing stale release evidence.
 
 ### Upgrade, rollback and recovery
 
@@ -103,24 +102,17 @@ The repository includes:
 - **Release Provenance Gate** that builds the wheel and deterministic `SHA256SUMS` on pull requests; and
 - tag-scoped GitHub artifact attestations for version-matching `v*` release builds.
 
-Build provenance is not a claim that an artifact is vulnerability-free or production-safe. It is supply-chain evidence linking a built artifact to source/build context for external verification.
+Build provenance is supply-chain evidence, not a claim that an artifact is vulnerability-free or production-safe.
 
 ## Operational runbooks
 
-v0.9 includes accountable-operator runbooks for:
-
-- [deployment](docs/runbooks/DEPLOYMENT.md);
-- [incident response](docs/runbooks/INCIDENT_RESPONSE.md);
-- [KMS/HSM key rotation](docs/runbooks/KEY_ROTATION.md); and
-- [disaster recovery](docs/runbooks/DISASTER_RECOVERY.md).
-
-They define preconditions, abort criteria and evidence requirements; they do not automate privileged production actions.
+v0.9 includes accountable-operator runbooks for [deployment](docs/runbooks/DEPLOYMENT.md), [incident response](docs/runbooks/INCIDENT_RESPONSE.md), [KMS/HSM key rotation](docs/runbooks/KEY_ROTATION.md) and [disaster recovery](docs/runbooks/DISASTER_RECOVERY.md). They define preconditions, abort criteria and retained evidence; they do not automate privileged production actions.
 
 ## Earlier boundaries retained
 
 - **v0.8 Tenant and Cryptographic Hardening:** PostgreSQL RLS reference DDL, tenant profiles, KMS/HSM-only key references, one-way key lifecycle, signed configuration changes, tenant-scoped AES-GCM evidence and external audit anchoring. See [docs/TENANT_CRYPTO_HARDENING.md](docs/TENANT_CRYPTO_HARDENING.md).
-- **v0.7 Assurance Evidence:** human-reviewed mappings for NIST AI RMF 1.0, ISO/IEC 42001:2023 and Regulation (EU) 2024/1689 with explicit non-certification semantics. See [docs/ASSURANCE_EVIDENCE.md](docs/ASSURANCE_EVIDENCE.md).
-- **v0.6 Data and Purpose Governance:** resource profiles, exact data-use declarations, purpose compatibility, minimization/output/retention constraints and execution-time drift checks. See [docs/DATA_PURPOSE_GOVERNANCE.md](docs/DATA_PURPOSE_GOVERNANCE.md).
+- **v0.7 Assurance Evidence:** human-reviewed NIST AI RMF 1.0, ISO/IEC 42001:2023 and Regulation (EU) 2024/1689 evidence mapping with explicit non-certification semantics. See [docs/ASSURANCE_EVIDENCE.md](docs/ASSURANCE_EVIDENCE.md).
+- **v0.6 Data and Purpose Governance:** exact resource/data-use/purpose/output/retention controls and execution-time drift checks. See [docs/DATA_PURPOSE_GOVERNANCE.md](docs/DATA_PURPOSE_GOVERNANCE.md).
 - **v0.5 Signed Execution Receipts:** short-lived executor-bound one-time leases, emergency stop and domain-separated signed receipts. See [docs/EXECUTION_RECEIPTS.md](docs/EXECUTION_RECEIPTS.md).
 - **v0.4 MCP Governance:** approved/pinned servers, bounded snapshots and explicit governed tool bindings. See [docs/MCP_GOVERNANCE.md](docs/MCP_GOVERNANCE.md).
 - **v0.3 Human Approval:** requester/approver separation, delegated authority, signatures and replay prevention. See [docs/APPROVALS.md](docs/APPROVALS.md).
@@ -135,8 +127,10 @@ RegAgentOps v0.9 remains evidence/control focused:
 - no production tool invocation from the governance/policy worker;
 - no network/process capability in governed core modules;
 - no embedded production credentials, private signing keys or symmetric evidence keys;
+- worker registration resolves current tenant isolation plus current egress/tool policies;
 - release evidence binds source, artifact, CodeQL, provenance and checksum digests;
-- stale worker/egress/tool policy invalidates release currentness;
+- stale worker/egress/tool/tenant-isolation state invalidates release currentness;
+- worker and release evidence cannot be backdated before their dependencies;
 - upgrade cannot advertise a rollback path that does not exactly reverse the transition;
 - historical backup/release evidence cannot justify weakening current RLS/egress/tool/key controls;
 - human approval cannot override identity, policy or data-governance denial;
