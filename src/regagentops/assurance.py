@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 import re
 
@@ -48,15 +49,9 @@ def _require_digest(name: str, value: str) -> None:
         raise ValueError(f"{name} must be a lowercase SHA-256 hex digest")
 
 
-def _require_sorted_unique_text(name: str, values: tuple[str, ...], *, allow_empty: bool = False) -> None:
-    if not allow_empty and not values:
-        raise ValueError(f"{name} must not be empty")
-    if len(values) != len(set(values)):
-        raise ValueError(f"{name} must be unique")
-    if tuple(sorted(values)) != values:
-        raise ValueError(f"{name} must be lexically sorted")
-    for value in values:
-        _require_text(name, value, limit=512)
+def _parse_time(name: str, value: str) -> datetime:
+    _require_utc_timestamp(name, value)
+    return datetime.fromisoformat(value[:-1] + "+00:00")
 
 
 def _require_sorted_unique_enum(name: str, values: tuple[Enum, ...], enum_type: type[Enum], *, allow_empty: bool = False) -> None:
@@ -260,7 +255,7 @@ class AssuranceEvidenceRegistry:
     """Append-only assurance crosswalk registry. It maps evidence; it never determines compliance or applicability."""
 
     def __init__(self) -> None:
-        self._scopes: dict[tuple[str, str, str], AssuranceScope] = {}
+        self._scopes: dict[tuple[str, str, str, str], AssuranceScope] = {}
         self._assertions: dict[tuple[str, str], AssuranceApplicabilityAssertion] = {}
         self._evidence: dict[tuple[str, str], AssuranceEvidenceReference] = {}
         self._entries: dict[tuple[str, str], AssuranceCrosswalkEntry] = {}
@@ -272,7 +267,7 @@ class AssuranceEvidenceRegistry:
         return existing.artifact_digest
 
     def register_scope(self, scope: AssuranceScope) -> str:
-        key = (scope.institution_id, scope.system_id, scope.deployment_id)
+        key = (scope.institution_id, scope.system_id, scope.deployment_id, scope.context_digest)
         existing = self._scopes.get(key)
         if existing is not None:
             return self._same_or_conflict(existing, scope, "assurance scope")
@@ -280,13 +275,15 @@ class AssuranceEvidenceRegistry:
         return scope.artifact_digest
 
     def _scope_by_digest(self, institution_id: str, scope_digest: str) -> AssuranceScope:
-        for (scope_institution, _, _), scope in self._scopes.items():
+        for (scope_institution, _, _, _), scope in self._scopes.items():
             if scope_institution == institution_id and scope.artifact_digest == scope_digest:
                 return scope
         raise ValueError("unknown assurance scope digest")
 
     def register_applicability(self, assertion: AssuranceApplicabilityAssertion) -> str:
-        self._scope_by_digest(assertion.institution_id, assertion.scope_digest)
+        scope = self._scope_by_digest(assertion.institution_id, assertion.scope_digest)
+        if _parse_time("confirmed_at", assertion.confirmed_at) < _parse_time("scope recorded_at", scope.recorded_at):
+            raise ValueError("applicability confirmation cannot predate assurance scope")
         key = (assertion.institution_id, assertion.assertion_id)
         existing = self._assertions.get(key)
         if existing is not None:
@@ -295,7 +292,9 @@ class AssuranceEvidenceRegistry:
         return assertion.artifact_digest
 
     def register_evidence(self, evidence: AssuranceEvidenceReference) -> str:
-        self._scope_by_digest(evidence.institution_id, evidence.scope_digest)
+        scope = self._scope_by_digest(evidence.institution_id, evidence.scope_digest)
+        if _parse_time("evidence recorded_at", evidence.recorded_at) < _parse_time("scope recorded_at", scope.recorded_at):
+            raise ValueError("assurance evidence cannot predate assurance scope")
         key = (evidence.institution_id, evidence.evidence_id)
         existing = self._evidence.get(key)
         if existing is not None:
@@ -331,6 +330,8 @@ class AssuranceEvidenceRegistry:
             or assertion.reference_id != entry.reference_id
         ):
             raise ValueError("crosswalk entry does not match the exact human applicability assertion")
+        if _parse_time("mapped_at", entry.mapped_at) < _parse_time("confirmed_at", assertion.confirmed_at):
+            raise ValueError("assurance mapping cannot predate applicability confirmation")
         if assertion.applicability is Applicability.NOT_APPLICABLE:
             if entry.coverage is not EvidenceCoverage.NOT_APPLICABLE:
                 raise ValueError("not-applicable human assertion requires not_applicable coverage")
@@ -340,6 +341,8 @@ class AssuranceEvidenceRegistry:
             evidence = self._evidence_by_digest(entry.institution_id, digest)
             if evidence.scope_digest != entry.scope_digest:
                 raise ValueError("crosswalk evidence belongs to a different assurance scope")
+            if _parse_time("mapped_at", entry.mapped_at) < _parse_time("evidence recorded_at", evidence.recorded_at):
+                raise ValueError("assurance mapping cannot predate mapped evidence")
         key = (entry.institution_id, entry.entry_id)
         existing = self._entries.get(key)
         if existing is not None:
@@ -350,7 +353,7 @@ class AssuranceEvidenceRegistry:
     def snapshot_digest(self, institution_id: str) -> str:
         return digest_artifact({
             "institution_id": institution_id,
-            "scopes": sorted(scope.artifact_digest for (scope_id, _, _), scope in self._scopes.items() if scope_id == institution_id),
+            "scopes": sorted(scope.artifact_digest for (scope_id, _, _, _), scope in self._scopes.items() if scope_id == institution_id),
             "applicability_assertions": sorted(item.artifact_digest for (scope_id, _), item in self._assertions.items() if scope_id == institution_id),
             "evidence_references": sorted(item.artifact_digest for (scope_id, _), item in self._evidence.items() if scope_id == institution_id),
             "crosswalk_entries": sorted(item.artifact_digest for (scope_id, _), item in self._entries.items() if scope_id == institution_id),
@@ -372,6 +375,8 @@ class AssuranceEvidenceRegistry:
         entries = tuple(self._entry_by_digest(institution_id, digest) for digest in crosswalk_entry_digests)
         if any(entry.scope_digest != scope_digest for entry in entries):
             raise ValueError("assurance package entries must belong to one exact scope")
+        if any(_parse_time("assembled_at", assembled_at) < _parse_time("mapped_at", entry.mapped_at) for entry in entries):
+            raise ValueError("assurance package cannot predate its crosswalk entries")
         entry_digests = tuple(sorted({entry.artifact_digest for entry in entries}))
         assertion_digests = tuple(sorted({entry.applicability_assertion_digest for entry in entries}))
         evidence_digests = tuple(sorted({digest for entry in entries for digest in entry.evidence_reference_digests}))
@@ -393,6 +398,8 @@ class AssuranceEvidenceRegistry:
         entries = tuple(self._entry_by_digest(package.institution_id, digest) for digest in package.crosswalk_entry_digests)
         if any(entry.scope_digest != package.scope_digest for entry in entries):
             raise ValueError("assurance package contains cross-scope entries")
+        if any(_parse_time("assembled_at", package.assembled_at) < _parse_time("mapped_at", entry.mapped_at) for entry in entries):
+            raise ValueError("assurance package predates its crosswalk entries")
         expected_assertions = tuple(sorted({entry.applicability_assertion_digest for entry in entries}))
         expected_evidence = tuple(sorted({digest for entry in entries for digest in entry.evidence_reference_digests}))
         expected_frameworks = tuple(sorted({entry.framework for entry in entries}, key=lambda value: value.value))
