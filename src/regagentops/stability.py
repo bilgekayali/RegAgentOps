@@ -511,15 +511,22 @@ class StableReleaseRegistry:
         *,
         source_release: DeploymentReleaseManifest,
         production_release: DeploymentReleaseManifest,
+        upgrade_path: SupportedUpgradePath,
     ) -> None:
         registered = self.baseline(baseline.release_version)
         if registered.artifact_digest != baseline.artifact_digest:
             raise ValueError("stable release baseline does not match the registered exact baseline")
+        if baseline.supported_upgrade_path_digest != upgrade_path.artifact_digest:
+            raise ValueError("stable baseline currentness upgrade path digest mismatch")
         if not source_release.release_version.startswith("0.9."):
             raise ValueError("stable upgrade source release must belong to 0.9.x")
+        if upgrade_path.source_release_digest != source_release.artifact_digest:
+            raise ValueError("stable baseline currentness source release does not match exact upgrade path")
         if production_release.release_version != STABLE_VERSION:
             raise ValueError("stable currentness requires the exact 1.0 production release")
         if baseline.production_release_manifest_digest != production_release.artifact_digest:
             raise ValueError("stable baseline production release digest mismatch")
+        if upgrade_path.target_release_digest != production_release.artifact_digest:
+            raise ValueError("stable baseline currentness target release does not match exact upgrade path")
         self._production.assert_release_current(source_release)
         self._production.assert_release_current(production_release)
