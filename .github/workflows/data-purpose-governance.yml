@@ -50,7 +50,7 @@ jobs:
         run: python -m pip install -e .
       - name: Run data-purpose governance regression tests
         run: python -m unittest discover -s tests -p 'test_data_governance*.py' -v
-      - name: Verify v0.6 data-purpose contracts
+      - name: Verify v0.6+ data-purpose contracts
         shell: bash
         run: |
           python - <<'PY'
@@ -59,7 +59,8 @@ jobs:
           import tomllib
 
           payload = tomllib.load(open('pyproject.toml', 'rb'))
-          assert payload['project']['version'] == '0.6.0'
+          version = tuple(int(part) for part in payload['project']['version'].split('.'))
+          assert version >= (0, 6, 0)
           assert payload['project']['dependencies'] == ['PyJWT[crypto]>=2.13,<3']
           expected = {
               'data-resource-profile.schema.json': 'regagentops.data-resource-profile.v1',
