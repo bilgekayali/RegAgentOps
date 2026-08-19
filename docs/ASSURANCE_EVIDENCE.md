@@ -59,11 +59,34 @@ AssuranceApplicabilityAssertion
      requires_human_review = true
 ```
 
-## Exact assurance scope
+## Exact assurance scope and scope history
 
 `AssuranceScope` binds evidence mapping to one institution, AI-system identifier, deployment identifier, accountable human owner, environment and a SHA-256 digest of the external system/deployment context record.
 
-The context digest lets an operator bind the crosswalk to an inventory, architecture, risk assessment or deployment record without RegAgentOps needing to ingest that document. A different deployment or context record requires a different scope digest.
+The context digest lets an operator bind the crosswalk to an inventory, architecture, risk assessment or deployment record without RegAgentOps needing to ingest that document. The registry keys historical scope identity by institution, system, deployment **and context digest**. The same deployment may therefore receive a later scope for a changed context record without rewriting the earlier scope. Reusing the same scope identity with different content fails closed.
+
+A changed context digest creates a new assurance scope and requires new scope-bound applicability/evidence mappings; historical packages remain addressable by their original digests.
+
+## Chronological provenance
+
+v0.7 enforces a monotonic evidence chronology as well as digest linkage:
+
+```text
+AssuranceScope.recorded_at
+        <= ApplicabilityAssertion.confirmed_at
+        <= CrosswalkEntry.mapped_at
+
+AssuranceScope.recorded_at
+        <= AssuranceEvidenceReference.recorded_at
+        <= CrosswalkEntry.mapped_at
+
+CrosswalkEntry.mapped_at
+        <= AssuranceEvidencePackage.assembled_at
+```
+
+Equal timestamps are permitted, but an artifact cannot claim to have been confirmed, recorded, mapped or assembled before the evidence on which it depends. Package verification repeats the package-versus-entry chronology check so a later tamper of `assembled_at` is rejected.
+
+These timestamps are application evidence, not an independent trusted timestamp authority.
 
 ## Human-confirmed applicability
 
@@ -121,7 +144,7 @@ The mapping rationale and mapper human identity are mandatory. RegAgentOps does 
 
 ## Evidence packages
 
-`AssuranceEvidenceRegistry.build_package()` assembles exact crosswalk-entry, applicability-assertion and evidence-reference digests for one assurance scope. Package verification recomputes those sets from registered entries and rejects substitution or cross-scope evidence.
+`AssuranceEvidenceRegistry.build_package()` assembles exact crosswalk-entry, applicability-assertion and evidence-reference digests for one assurance scope. Package verification recomputes those sets from registered entries and rejects substitution or cross-scope evidence. Package assembly must occur at or after every included crosswalk mapping.
 
 The package contract structurally fixes these non-claims:
 
@@ -156,13 +179,17 @@ The v0.7 registry fails closed when, among other conditions:
 
 - a framework version differs from the pinned v0.7 version;
 - an applicability assertion references an unknown assurance scope;
+- applicability confirmation predates the assurance scope;
+- an evidence reference predates the assurance scope;
 - an EU AI Act assertion lacks a human-confirmed operator role;
 - NIST/ISO assertions carry EU operator roles;
 - a crosswalk entry does not match the exact human applicability assertion;
+- a crosswalk mapping predates its applicability confirmation or any mapped evidence;
 - applicable/not-applicable status is contradicted by coverage;
 - supported/partial coverage lacks evidence;
 - gap/not-applicable coverage carries evidence;
 - evidence belongs to a different assurance scope;
+- package assembly predates an included crosswalk entry;
 - a package substitutes its assertion, evidence or framework set; or
 - a package attempts to claim certification, conformity or legal compliance.
 
@@ -177,6 +204,7 @@ v0.7 provides deterministic digest linkage and evidence organization. It does **
 - a NIST AI RMF compliance score;
 - proof that mapped evidence is sufficient for an auditor, regulator or court;
 - proof that referenced external artifacts are immutable, complete or truthful;
+- independent trusted timestamping;
 - regulatory, supervisory or certification acceptance; or
 - production fitness.
 
