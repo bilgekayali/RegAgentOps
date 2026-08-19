@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "regagentops"
-version = "0.8.0"
+version = "0.9.0"
 description = "Evidence-backed authorization and governance control plane for AI agents in regulated enterprises"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -17,9 +17,11 @@ keywords = [
   "ai-agents",
   "assurance-evidence",
   "authorization",
+  "codeql",
   "cryptographic-hardening",
   "data-governance",
   "delegated-authority",
+  "deployment",
   "eu-ai-act",
   "execution-receipts",
   "governance",
@@ -32,8 +34,10 @@ keywords = [
   "oidc",
   "policy-engine",
   "postgresql-rls",
+  "provenance",
   "purpose-limitation",
   "regulated-enterprise",
+  "release-attestation",
   "tenant-isolation",
   "workload-identity",
 ]
