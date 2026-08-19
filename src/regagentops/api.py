@@ -12,7 +12,6 @@ from .deployment import (
     ProductionDeploymentRegistry,
     RecoveryCheckpoint,
     RollbackPlan,
-    SupportedUpgradePath as _UnsupportedDeploymentName,
     ToolAllowlistPolicy,
     UpgradePlan,
 )
