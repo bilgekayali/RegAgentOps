@@ -1,0 +1,124 @@
+name: Assurance Evidence Boundary
+
+on:
+  push:
+    branches:
+      - main
+      - "agent/**"
+    paths:
+      - "src/regagentops/assurance.py"
+      - "tests/test_assurance*.py"
+      - "schemas/assurance-*.json"
+      - "pyproject.toml"
+      - "README.md"
+      - "docs/ASSURANCE_EVIDENCE.md"
+      - "docs/ARCHITECTURE.md"
+      - "docs/ROADMAP.md"
+      - "docs/THREAT_MODEL.md"
+      - ".github/workflows/assurance-evidence.yml"
+  pull_request:
+    paths:
+      - "src/regagentops/assurance.py"
+      - "tests/test_assurance*.py"
+      - "schemas/assurance-*.json"
+      - "pyproject.toml"
+      - "README.md"
+      - "docs/ASSURANCE_EVIDENCE.md"
+      - "docs/ARCHITECTURE.md"
+      - "docs/ROADMAP.md"
+      - "docs/THREAT_MODEL.md"
+      - ".github/workflows/assurance-evidence.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  assurance-evidence-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install package
+        run: python -m pip install -e .
+      - name: Run assurance evidence regression tests
+        run: python -m unittest discover -s tests -p 'test_assurance*.py' -v
+      - name: Verify v0.7+ assurance contracts
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import tomllib
+
+          payload = tomllib.load(open('pyproject.toml', 'rb'))
+          version = tuple(int(part) for part in payload['project']['version'].split('.'))
+          assert version >= (0, 7, 0)
+          assert payload['project']['dependencies'] == ['PyJWT[crypto]>=2.13,<3']
+          expected = {
+              'assurance-scope.schema.json': 'regagentops.assurance-scope.v1',
+              'assurance-applicability-assertion.schema.json': 'regagentops.assurance-applicability-assertion.v1',
+              'assurance-evidence-reference.schema.json': 'regagentops.assurance-evidence-reference.v1',
+              'assurance-crosswalk-entry.schema.json': 'regagentops.assurance-crosswalk-entry.v1',
+              'assurance-evidence-package.schema.json': 'regagentops.assurance-evidence-package.v1',
+          }
+          for filename, discriminator in expected.items():
+              schema = json.loads((Path('schemas') / filename).read_text(encoding='utf-8'))
+              assert schema['$schema'] == 'https://json-schema.org/draft/2020-12/schema'
+              assert schema['additionalProperties'] is False
+              assert schema['properties']['schema_version']['const'] == discriminator
+
+          applicability = json.loads(Path('schemas/assurance-applicability-assertion.schema.json').read_text())
+          assert 'confirmed_by_human_id' in applicability['required']
+          assert 'eu_ai_act_roles' in applicability['required']
+          text = json.dumps(applicability, sort_keys=True)
+          assert '1.0' in text and '2023' in text and '2024/1689' in text
+          package = json.loads(Path('schemas/assurance-evidence-package.schema.json').read_text())
+          assert package['properties']['certification_claimed']['const'] is False
+          assert package['properties']['conformity_claimed']['const'] is False
+          assert package['properties']['legal_compliance_determined']['const'] is False
+          assert package['properties']['requires_human_review']['const'] is True
+          PY
+      - name: Verify non-determinative offline assurance surface
+        shell: bash
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          path = Path('src/regagentops/assurance.py')
+          source = path.read_text(encoding='utf-8')
+          tree = ast.parse(source, filename=str(path))
+          banned = {'asyncio', 'ftplib', 'http', 'requests', 'socket', 'subprocess', 'telnetlib', 'urllib'}
+          for node in ast.walk(tree):
+              if isinstance(node, ast.Import):
+                  roots = {alias.name.split('.')[0] for alias in node.names}
+              elif isinstance(node, ast.ImportFrom) and node.module:
+                  roots = {node.module.split('.')[0]}
+              else:
+                  continue
+              blocked = roots & banned
+              if blocked:
+                  raise SystemExit(f'{path}: forbidden capability import(s): {sorted(blocked)}')
+
+          required_markers = (
+              'SUPPORTED_FRAMEWORK_VERSIONS',
+              'NIST_AI_RMF',
+              'ISO_IEC_42001',
+              'EU_AI_ACT',
+              'DEPLOYER',
+              'confirmed_by_human_id',
+              'certification_claimed',
+              'conformity_claimed',
+              'legal_compliance_determined',
+              'requires_human_review',
+              'never determines compliance or applicability',
+          )
+          for marker in required_markers:
+              if marker not in source:
+                  raise SystemExit(f'missing v0.7 assurance invariant: {marker}')
+          for marker in ('requests.', 'httpx.', 'subprocess.', '.invoke(', '.execute_tool(', 'auto_classify', 'determine_compliance'):
+              if marker in source:
+                  raise SystemExit(f'assurance core violates non-determinative capability boundary: {marker}')
+          PY
