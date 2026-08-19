@@ -7,6 +7,8 @@ on:
       - "src/**"
       - "tests/**"
       - "schemas/**"
+      - "compatibility/**"
+      - "security-review/**"
       - "pyproject.toml"
       - ".github/workflows/release-provenance.yml"
   push:
@@ -19,20 +21,32 @@ permissions:
 
 jobs:
   release-contract:
-    name: Build and verify release contract
+    name: Build and verify reproducible release contract
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - name: Build wheel
-        run: |
-          python -m pip install build
-          python -m build --wheel
-      - name: Generate deterministic checksum manifest
+      - name: Set reproducible build epoch
+        shell: bash
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+      - name: Build wheel twice from the same source epoch
         shell: bash
         run: |
+          python -m pip install build
+          python -m build --wheel --outdir dist-a
+          python -m build --wheel --outdir dist-b
+      - name: Verify reproducible wheel bytes and generate checksum manifest
+        shell: bash
+        run: |
+          test "$(find dist-a -maxdepth 1 -type f -name '*.whl' | wc -l)" -eq 1
+          test "$(find dist-b -maxdepth 1 -type f -name '*.whl' | wc -l)" -eq 1
+          A=$(find dist-a -maxdepth 1 -type f -name '*.whl' -print -quit)
+          B=$(find dist-b -maxdepth 1 -type f -name '*.whl' -print -quit)
+          test "$(sha256sum "$A" | awk '{print $1}')" = "$(sha256sum "$B" | awk '{print $1}')"
+          mkdir -p dist
+          cp "$A" dist/
           find dist -maxdepth 1 -type f -name '*.whl' -print0 | sort -z | xargs -0 sha256sum > dist/SHA256SUMS
           test -s dist/SHA256SUMS
       - name: Verify package and workflow release invariants
@@ -52,9 +66,16 @@ jobs:
           assert len(sums) == 1
           assert len(sums[0].split()[0]) == 64
           workflow = Path('.github/workflows/release-provenance.yml').read_text(encoding='utf-8')
-          assert 'actions/attest@v4' in workflow
-          assert 'id-token: write' in workflow
-          assert 'attestations: write' in workflow
+          for marker in (
+              'actions/checkout@v6',
+              'actions/setup-python@v6',
+              'actions/attest@v4',
+              'id-token: write',
+              'attestations: write',
+              'SOURCE_DATE_EPOCH',
+              'security-review/v1.0-review.json',
+          ):
+              assert marker in workflow, marker
           assert "startsWith(github.ref, 'refs/tags/v')" in workflow
           PY
 
@@ -68,8 +89,8 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: Verify tag matches package version
@@ -81,11 +102,60 @@ jobs:
           PY
           )
           test "${GITHUB_REF_NAME#v}" = "$VERSION"
-      - name: Build release wheel and checksum manifest
+      - name: Require completed independent v1 review before v1.0.0 tag
+        if: github.ref_name == 'v1.0.0'
+        shell: bash
+        run: |
+          test -f security-review/v1.0-review.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          required = (
+              'approval-replay-and-delegation',
+              'assurance-non-claims',
+              'authenticated-identity-binding',
+              'authorization-default-deny',
+              'capability-creep',
+              'data-purpose-and-retention',
+              'execution-lease-and-receipts',
+              'mcp-server-tool-binding',
+              'production-egress-tool-worker',
+              'release-provenance-and-reproducibility',
+              'tenant-isolation-and-crypto-lifecycle',
+              'upgrade-rollback-and-recovery',
+          )
+          review = json.loads(Path('security-review/v1.0-review.json').read_text(encoding='utf-8'))
+          assert review['schema_version'] == 'regagentops.independent-security-review-checklist.v1'
+          assert review['release_version'] == '1.0.0'
+          assert review['reviewer_independence_confirmed'] is True
+          items = review['items']
+          assert tuple(item['item_id'] for item in items) == required
+          assert all(item['status'] in {'closed', 'risk_accepted'} for item in items)
+          for item in items:
+              assert len(item['evidence_digest']) == 64
+              assert len(item['reviewer_rationale_digest']) == 64
+              if item['status'] == 'risk_accepted':
+                  assert item['risk_acceptance_human_id']
+                  assert len(item['risk_acceptance_digest']) == 64
+              else:
+                  assert item['risk_acceptance_human_id'] is None
+                  assert item['risk_acceptance_digest'] is None
+          PY
+      - name: Set reproducible build epoch
+        shell: bash
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+      - name: Build release wheel twice and verify reproducibility
         shell: bash
         run: |
           python -m pip install build
-          python -m build --wheel
+          python -m build --wheel --outdir dist-a
+          python -m build --wheel --outdir dist-b
+          A=$(find dist-a -maxdepth 1 -type f -name '*.whl' -print -quit)
+          B=$(find dist-b -maxdepth 1 -type f -name '*.whl' -print -quit)
+          test "$(sha256sum "$A" | awk '{print $1}')" = "$(sha256sum "$B" | awk '{print $1}')"
+          mkdir -p dist
+          cp "$A" dist/
           find dist -maxdepth 1 -type f -name '*.whl' -print0 | sort -z | xargs -0 sha256sum > dist/SHA256SUMS
       - name: Attest release wheel provenance
         uses: actions/attest@v4
