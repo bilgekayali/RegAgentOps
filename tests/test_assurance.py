@@ -95,6 +95,15 @@ class AssuranceEvidenceTests(unittest.TestCase):
             mapped_at=mapped_at,
         )
 
+    def registered_mapping(self, *, mapped_at=NOW):
+        assertion = self.assertion()
+        evidence = self.evidence()
+        self.registry.register_applicability(assertion)
+        self.registry.register_evidence(evidence)
+        entry = self.entry(assertion, evidence_digests=(evidence.artifact_digest,), mapped_at=mapped_at)
+        self.registry.register_entry(entry)
+        return assertion, evidence, entry
+
     def test_framework_versions_are_explicitly_pinned(self):
         with self.assertRaisesRegex(ValueError, "pinned to 1.0"):
             self.assertion(framework_version="2.0")
@@ -136,11 +145,7 @@ class AssuranceEvidenceTests(unittest.TestCase):
             self.assertion(roles=(EUAIActRole.DEPLOYER,))
 
     def test_scope_history_allows_new_context_for_same_deployment(self):
-        later_scope = replace(
-            self.scope,
-            context_digest="c" * 64,
-            recorded_at=AFTER,
-        )
+        later_scope = replace(self.scope, context_digest="c" * 64, recorded_at=AFTER)
         first_digest = self.scope.artifact_digest
         second_digest = self.registry.register_scope(later_scope)
         self.assertNotEqual(first_digest, second_digest)
@@ -149,12 +154,27 @@ class AssuranceEvidenceTests(unittest.TestCase):
             scope_digest=second_digest,
         )
         self.registry.register_applicability(second_assertion)
-        self.assertNotEqual(self.registry.snapshot_digest("bank-demo"), "0" * 64)
+
+    def test_new_context_scope_cannot_be_backdated(self):
+        backdated = replace(self.scope, context_digest="c" * 64, recorded_at=BEFORE)
+        with self.assertRaisesRegex(ValueError, "cannot predate existing deployment scope history"):
+            self.registry.register_scope(backdated)
 
     def test_applicability_cannot_predate_scope(self):
         assertion = self.assertion(confirmed_at=BEFORE)
         with self.assertRaisesRegex(ValueError, "cannot predate assurance scope"):
             self.registry.register_applicability(assertion)
+
+    def test_same_scope_framework_reference_cannot_have_conflicting_assertions(self):
+        first = self.assertion()
+        self.registry.register_applicability(first)
+        conflicting = self.assertion(
+            assertion_id="assertion-conflict",
+            applicability=Applicability.NOT_APPLICABLE,
+            confirmed_at=AFTER,
+        )
+        with self.assertRaisesRegex(ValueError, "already has an applicability assertion"):
+            self.registry.register_applicability(conflicting)
 
     def test_evidence_cannot_predate_scope(self):
         evidence = self.evidence(recorded_at=BEFORE)
@@ -173,25 +193,24 @@ class AssuranceEvidenceTests(unittest.TestCase):
         evidence = self.evidence(recorded_at=AFTER)
         self.registry.register_applicability(assertion)
         self.registry.register_evidence(evidence)
-        entry = self.entry(
-            assertion,
-            evidence_digests=(evidence.artifact_digest,),
-            mapped_at=NOW,
-        )
+        entry = self.entry(assertion, evidence_digests=(evidence.artifact_digest,), mapped_at=NOW)
         with self.assertRaisesRegex(ValueError, "cannot predate mapped evidence"):
             self.registry.register_entry(entry)
 
-    def test_package_cannot_predate_crosswalk_entry(self):
-        assertion = self.assertion()
-        evidence = self.evidence()
-        self.registry.register_applicability(assertion)
-        self.registry.register_evidence(evidence)
-        entry = self.entry(
+    def test_exact_applicability_assertion_has_one_crosswalk_entry(self):
+        assertion, evidence, entry = self.registered_mapping()
+        conflicting = self.entry(
             assertion,
+            entry_id="entry-conflict",
+            coverage=EvidenceCoverage.PARTIAL,
             evidence_digests=(evidence.artifact_digest,),
-            mapped_at=AFTER,
         )
-        self.registry.register_entry(entry)
+        with self.assertRaisesRegex(ValueError, "already has a crosswalk entry"):
+            self.registry.register_entry(conflicting)
+        self.assertEqual(entry.coverage, EvidenceCoverage.SUPPORTED)
+
+    def test_package_cannot_predate_crosswalk_entry(self):
+        _, _, entry = self.registered_mapping(mapped_at=AFTER)
         with self.assertRaisesRegex(ValueError, "cannot predate its crosswalk entries"):
             self.registry.build_package(
                 package_id="early-package",
@@ -203,12 +222,7 @@ class AssuranceEvidenceTests(unittest.TestCase):
             )
 
     def test_nist_crosswalk_binds_exact_human_assertion_and_evidence(self):
-        assertion = self.assertion()
-        evidence = self.evidence()
-        self.registry.register_applicability(assertion)
-        self.registry.register_evidence(evidence)
-        entry = self.entry(assertion, evidence_digests=(evidence.artifact_digest,))
-        self.registry.register_entry(entry)
+        _, evidence, entry = self.registered_mapping()
         package = self.registry.build_package(
             package_id="package-1",
             institution_id="bank-demo",
@@ -283,11 +297,7 @@ class AssuranceEvidenceTests(unittest.TestCase):
             self.entry(assertion, coverage=EvidenceCoverage.SUPPORTED)
         evidence = self.evidence()
         with self.assertRaisesRegex(ValueError, "must not carry evidence"):
-            self.entry(
-                assertion,
-                coverage=EvidenceCoverage.GAP,
-                evidence_digests=(evidence.artifact_digest,),
-            )
+            self.entry(assertion, coverage=EvidenceCoverage.GAP, evidence_digests=(evidence.artifact_digest,))
 
     def test_cross_scope_evidence_substitution_fails_closed(self):
         other_scope = AssuranceScope(
@@ -309,12 +319,7 @@ class AssuranceEvidenceTests(unittest.TestCase):
             self.registry.register_entry(entry)
 
     def test_package_detects_evidence_set_substitution(self):
-        assertion = self.assertion()
-        evidence = self.evidence()
-        self.registry.register_applicability(assertion)
-        self.registry.register_evidence(evidence)
-        entry = self.entry(assertion, evidence_digests=(evidence.artifact_digest,))
-        self.registry.register_entry(entry)
+        _, _, entry = self.registered_mapping()
         package = self.registry.build_package(
             package_id="package-1",
             institution_id="bank-demo",
@@ -323,17 +328,16 @@ class AssuranceEvidenceTests(unittest.TestCase):
             assembled_by_human_id="assurance-reviewer-1",
             assembled_at=NOW,
         )
-        tampered = replace(package, evidence_reference_digests=("d" * 64,))
+        tampered = replace(
+            package,
+            package_id="unregistered-tampered-package",
+            evidence_reference_digests=("d" * 64,),
+        )
         with self.assertRaisesRegex(ValueError, "evidence reference set"):
             self.registry.verify_package(tampered)
 
     def test_package_verification_rejects_tampered_early_assembly_time(self):
-        assertion = self.assertion()
-        evidence = self.evidence()
-        self.registry.register_applicability(assertion)
-        self.registry.register_evidence(evidence)
-        entry = self.entry(assertion, evidence_digests=(evidence.artifact_digest,), mapped_at=NOW)
-        self.registry.register_entry(entry)
+        _, _, entry = self.registered_mapping()
         package = self.registry.build_package(
             package_id="package-chronology",
             institution_id="bank-demo",
@@ -342,8 +346,55 @@ class AssuranceEvidenceTests(unittest.TestCase):
             assembled_by_human_id="assurance-reviewer-1",
             assembled_at=NOW,
         )
-        tampered = replace(package, assembled_at=BEFORE)
+        tampered = replace(package, package_id="unregistered-early-package", assembled_at=BEFORE)
         with self.assertRaisesRegex(ValueError, "predates its crosswalk entries"):
+            self.registry.verify_package(tampered)
+
+    def test_package_id_cannot_be_reused_with_different_content(self):
+        _, _, entry = self.registered_mapping()
+        first = self.registry.build_package(
+            package_id="immutable-package",
+            institution_id="bank-demo",
+            scope_digest=self.scope.artifact_digest,
+            crosswalk_entry_digests=(entry.artifact_digest,),
+            assembled_by_human_id="assurance-reviewer-1",
+            assembled_at=NOW,
+        )
+        with self.assertRaisesRegex(ValueError, "identity already exists with different content"):
+            self.registry.build_package(
+                package_id="immutable-package",
+                institution_id="bank-demo",
+                scope_digest=self.scope.artifact_digest,
+                crosswalk_entry_digests=(entry.artifact_digest,),
+                assembled_by_human_id="another-reviewer",
+                assembled_at=AFTER,
+            )
+        self.registry.verify_package(first)
+
+    def test_package_rejects_duplicate_crosswalk_input(self):
+        _, _, entry = self.registered_mapping()
+        with self.assertRaisesRegex(ValueError, "digests must be unique"):
+            self.registry.build_package(
+                package_id="duplicate-entry-package",
+                institution_id="bank-demo",
+                scope_digest=self.scope.artifact_digest,
+                crosswalk_entry_digests=(entry.artifact_digest, entry.artifact_digest),
+                assembled_by_human_id="assurance-reviewer-1",
+                assembled_at=NOW,
+            )
+
+    def test_registered_package_identity_rejects_tamper(self):
+        _, _, entry = self.registered_mapping()
+        package = self.registry.build_package(
+            package_id="registered-package",
+            institution_id="bank-demo",
+            scope_digest=self.scope.artifact_digest,
+            crosswalk_entry_digests=(entry.artifact_digest,),
+            assembled_by_human_id="assurance-reviewer-1",
+            assembled_at=NOW,
+        )
+        tampered = replace(package, assembled_by_human_id="attacker")
+        with self.assertRaisesRegex(ValueError, "does not match registered package identity"):
             self.registry.verify_package(tampered)
 
     def test_package_constructor_rejects_certification_conformity_or_legal_claims(self):
