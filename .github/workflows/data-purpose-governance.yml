@@ -104,6 +104,7 @@ jobs:
               'output_handling_not_permitted',
               'data governance state changed after authorization',
               'governance_evidence_digests',
+              'not bound into authenticated authorization evidence',
               'McpPolicyEnforcementPoint',
               'ExecutionGate',
               'single-pass adapter',
