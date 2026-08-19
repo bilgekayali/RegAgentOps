@@ -1,10 +1,10 @@
 # RegAgentOps Architecture
 
-## v0.3 boundary
+## v0.4 boundary
 
-RegAgentOps v0.3 is an **offline authenticated authorization and human-approval control plane**. It verifies bounded human/workload identity, evaluates institution policy, determines whether human approval is required by policy or risk escalation, verifies scoped signed approvals, and emits evidence-oriented authorization/approval artifacts.
+RegAgentOps v0.4 is an **offline authenticated authorization, human-approval and MCP-governance control plane**. It accepts caller-supplied MCP server/tool metadata only after institution-owned server approval and identity pinning, converts exact current tool metadata into explicit governed tool bindings, and then reuses the existing authenticated policy engine.
 
-It still does **not** invoke the requested tool.
+It still does **not** connect to an MCP server or invoke a requested tool.
 
 ```text
 OIDC ID token + pinned JWKS       Institution workload signer
@@ -21,7 +21,25 @@ OIDC ID token + pinned JWKS       Institution workload signer
                             v
              SignedAuthenticatedAgentIdentity
                             |
-AgentActionEnvelope --------+-------- PolicyBundle
+                            +-------------------------------+
+                                                            |
+Institution-approved MCP server                            |
+      |                                                     |
+      v                                                     |
+McpServerRegistration                                      |
+      |                                                     |
+caller-supplied bounded tool snapshot                      |
+      v                                                     |
+McpToolSnapshot                                             |
+      |                                                     |
+explicit institution-owned tool binding                    |
+      v                                                     |
+McpToolBinding -> derived ToolRegistry                      |
+      |                                                     |
+      +------------- AgentActionEnvelope + PolicyBundle ----+
+                            |
+                            v
+                 McpPolicyEnforcementPoint
                             |
                             v
                AuthenticatedPolicyEngine
@@ -29,6 +47,7 @@ AgentActionEnvelope --------+-------- PolicyBundle
                             v
           AuthenticatedAuthorizationDecision
                             |
+                 if approval required
                             v
                      ApprovalGate
                 /           |            \
@@ -40,8 +59,32 @@ AgentActionEnvelope --------+-------- PolicyBundle
                   ApprovalResolution
                             |
                             v
-                 Caller / future PEP
+                 Caller / future executor
 ```
+
+## MCP server and tool identity
+
+The MCP server-reported name is treated as metadata rather than the complete authorization identity. RegAgentOps assigns an institution-owned `server_id`, binds it to an explicit `server_identity_digest`, and versions the registration contiguously.
+
+A governed MCP tool identity is derived as `mcp:<server_id>:<tool_name>`. This keeps same-named tools on different approved servers in separate namespaces.
+
+`McpToolSnapshot` is caller supplied and bounded to 128 tools. It binds the exact server-registration digest, observed server name, observed server-identity digest and exact metadata digests for every represented tool. Duplicate names within a server and conflicting semantic-latest snapshots fail closed.
+
+## Untrusted MCP metadata
+
+Descriptions, input/output schemas and annotations are represented as immutable evidence digests. In particular, annotations are not translated into policy effects, risk tiers, production eligibility or approval requirements.
+
+The institution-owned `McpToolBinding` is the only v0.4 artifact that maps an MCP tool to the existing `ToolActionDescriptor` control boundary. It explicitly sets allowed data classifications, production-registration state and enabled state.
+
+Any new current server registration or newer tool snapshot makes an older binding non-current until an explicit binding version is registered against the new evidence.
+
+## Policy-enforcement point
+
+`McpPolicyEnforcementPoint` performs only governance precondition checks and authenticated policy evaluation. It derives a `ToolRegistry` from exact current bindings and delegates authorization to `AuthenticatedPolicyEngine`; it does not create a separate MCP policy language.
+
+If MCP governance preconditions fail, the adapter returns `DENY` without entering the authenticated policy engine. If preconditions pass, `McpPolicyEnforcementResult` binds the MCP registry snapshot, exact server/snapshot/descriptor evidence, authenticated authorization digest, decision, constraints, approval requirement flag and continuation permission.
+
+`execution_performed` is structurally fixed to `false` in v0.4.
 
 ## Authorization and identity
 
@@ -53,53 +96,38 @@ Policy precedence remains:
 
 No matching policy rule means `DENY`. Human approval cannot override a `DENY` or an unverified identity.
 
-## Approval requirement
+## Human approval continuation
 
-`ApprovalGate.build_requirement()` creates an approval requirement only when approval is actually required:
+The v0.3 approval plane remains separate from the MCP adapter. When authenticated policy returns `REQUIRE_HUMAN_APPROVAL`, the exact `AuthenticatedAuthorizationDecision` retained in `McpPolicyEnforcementOutcome` can be passed to `ApprovalGate.build_requirement()`.
 
-- policy returns `REQUIRE_HUMAN_APPROVAL`; or
-- request risk is `high`; or
-- request risk is `critical`.
-
-The reference escalation policy requires at least one approval for high risk and two distinct approvals for critical risk. Policy-required, high-risk and critical-risk flows require requester/approver separation.
-
-The requirement binds the exact request digest, authenticated authorization digest, signed identity-context digest, requester, tool/action, environment, risk tier, escalation-policy digest and expiry.
-
-## Delegated authority
-
-Approval authority is separate from signing-key trust.
-
-`ApprovalAuthorityGrant` defines what a principal may approve: tool ids, actions, environments, maximum risk tier and validity interval. Direct grants can permit delegation. Delegated grants bind their parent grant digest and are recursively validated.
-
-A delegated grant cannot widen the parent tool, action or environment scope, cannot raise its maximum risk tier, cannot outlive its parent and cannot be issued by anyone other than the parent grant subject. Cycles fail closed.
-
-## Signed approvals
-
-An `ApprovalStatement` binds the requirement, request, approver, authority-grant digest, vote, timestamps and rationale digest. The signed form uses Ed25519 with domain-separated purpose `regagentops.human-approval.v1`.
-
-Approval trust keys are institution- and principal-scoped. Key status, key lifetime, statement lifetime, principal binding and signature are checked before authority evaluation.
+The requirement therefore continues to bind the exact request digest, authenticated authorization digest, signed identity-context digest, requester, namespaced MCP tool/action, environment, risk tier, escalation-policy digest and expiry. Requester/approver separation, delegated authority, Ed25519 signatures and one-time replay prevention are unchanged.
 
 ## One-time resolution
 
-`ApprovalReplayLedger` is a reference append-only SQLite redemption boundary. A valid denial or a sufficient set of valid approvals terminally consumes the **approval requirement digest** in a transaction. This prevents the same requirement from being resolved again using another approval package.
-
-An insufficient package does not consume the requirement and may be completed with additional distinct valid approvals before expiry.
-
-`ApprovalResolution.authorization_continuation_permitted=true` means only that the v0.3 approval gate has been satisfied. It is not proof of tool execution and it does not issue credentials.
+`ApprovalReplayLedger` remains the v0.3 append-only SQLite redemption boundary. A valid denial or sufficient set of valid approvals terminally consumes the approval requirement digest. Approval resolution is continuation evidence only and still does not prove execution.
 
 ## Trust boundaries
 
-1. Caller → identity/PDP: caller input is untrusted until verified.
-2. Registry/policy/trust configuration → control plane: privileged configuration.
-3. Authenticated PDP → approval gate: v0.3 assumes the supplied authenticated authorization artifact is produced by the trusted local RegAgentOps PDP path; the approval gate binds it by digest but does not independently sign the PDP result.
-4. Approval signer → approval verifier: private-key custody remains outside RegAgentOps; only signed artifacts and public trust material cross the boundary.
-5. Approval gate → future PEP/executor: v0.3 emits continuation evidence only; execution is outside the milestone.
+1. **Caller → MCP governance registry**: supplied server/tool metadata is untrusted evidence until exact server-registration, identity-pin and currentness checks pass.
+2. **Institution MCP configuration → registry**: server approvals, identity pins, tool bindings, classification scope and production-registration flags are privileged institution-owned configuration.
+3. **MCP governance registry → authenticated PDP**: only exact current explicit bindings are converted into the legacy `ToolRegistry`; annotations do not cross this boundary as authority.
+4. **Caller → identity/PDP**: action and identity inputs remain untrusted until verified.
+5. **Registry/policy/trust configuration → control plane**: privileged configuration.
+6. **Authenticated PDP → approval gate**: the approval gate binds the authenticated authorization artifact by digest but does not independently sign the PDP result.
+7. **Approval signer → approval verifier**: private-key custody remains outside RegAgentOps; only signed artifacts and public trust material cross the boundary.
+8. **Approval gate → future executor**: v0.4 emits continuation evidence only; execution and execution receipts remain outside this milestone.
+
+## Historical evidence versus current state
+
+Server registrations, tool snapshots and bindings are append-only evidence in the MCP registry digest. Historical artifacts are not deleted when governance changes.
+
+Current MCP authorization, however, requires the exact latest approved server registration, a unique latest snapshot bound to that registration and the latest explicit binding for the exact descriptor. This prevents historical metadata from silently becoming current authorization state.
 
 ## Capability separation
 
-Authorization, identity and approval modules are statically checked in CI to reject network/process capability imports. OIDC remains offline and approval verification performs no external lookup. The replay ledger uses local SQLite only and exposes no destructive update/delete API.
+Authorization, identity, approval and MCP-governance modules are statically checked in CI to reject network/process capability imports. The MCP module additionally has no client/session/discovery interface and is checked for autonomous discovery/network markers. OIDC remains offline and approval verification performs no external lookup.
 
-Future MCP connectivity, credential brokerage and execution receipts remain separate roadmap boundaries.
+MCP connectivity, credential brokerage, one-time execution leases and signed execution receipts remain separate later roadmap boundaries.
 
 ## Standards posture
 
