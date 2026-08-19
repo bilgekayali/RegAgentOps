@@ -11,6 +11,7 @@ on:
       - "schemas/postgres-rls-policy.schema.json"
       - "schemas/tenant-isolation-profile.schema.json"
       - "schemas/institution-crypto-key-reference.schema.json"
+      - "schemas/crypto-key-lifecycle-state.schema.json"
       - "schemas/configuration-change-request.schema.json"
       - "schemas/signed-configuration-change.schema.json"
       - "schemas/encrypted-governance-evidence.schema.json"
@@ -30,6 +31,7 @@ on:
       - "schemas/postgres-rls-policy.schema.json"
       - "schemas/tenant-isolation-profile.schema.json"
       - "schemas/institution-crypto-key-reference.schema.json"
+      - "schemas/crypto-key-lifecycle-state.schema.json"
       - "schemas/configuration-change-request.schema.json"
       - "schemas/signed-configuration-change.schema.json"
       - "schemas/encrypted-governance-evidence.schema.json"
@@ -74,6 +76,7 @@ jobs:
               'postgres-rls-policy.schema.json': 'regagentops.postgres-rls-policy.v1',
               'tenant-isolation-profile.schema.json': 'regagentops.tenant-isolation-profile.v1',
               'institution-crypto-key-reference.schema.json': 'regagentops.institution-crypto-key-reference.v1',
+              'crypto-key-lifecycle-state.schema.json': 'regagentops.crypto-key-lifecycle-state.v1',
               'configuration-change-request.schema.json': 'regagentops.configuration-change-request.v1',
               'signed-configuration-change.schema.json': 'regagentops.signed-configuration-change.v1',
               'encrypted-governance-evidence.schema.json': 'regagentops.encrypted-governance-evidence.v1',
@@ -92,6 +95,8 @@ jobs:
           key = json.loads(Path('schemas/institution-crypto-key-reference.schema.json').read_text())
           assert key['properties']['custody']['enum'] == ['kms', 'hsm']
           assert 'private_key' not in key['properties'] and 'symmetric_key' not in key['properties']
+          lifecycle = json.loads(Path('schemas/crypto-key-lifecycle-state.schema.json').read_text())
+          assert lifecycle['properties']['status']['enum'] == ['active', 'retired', 'disabled']
           signed = json.loads(Path('schemas/signed-configuration-change.schema.json').read_text())
           assert signed['properties']['algorithm']['const'] == 'Ed25519'
           encrypted = json.loads(Path('schemas/encrypted-governance-evidence.schema.json').read_text())
@@ -126,19 +131,25 @@ jobs:
               'CryptoKeyCustody',
               'KMS',
               'HSM',
+              'CryptoKeyLifecycleState',
+              '_ALLOWED_KEY_TRANSITIONS',
+              'key lifecycle transition is not permitted',
               'regagentops.configuration-change.v1',
+              'configuration change cannot become current before effective_at',
               'regagentops.tenant-encrypted-governance-evidence.v1',
+              'selected_nonce = secrets.token_bytes(12)',
               'AES-256-GCM',
               'configuration change does not extend the exact tenant change chain',
               'external anchor receipt does not bind the exact audit batch',
-              'private or symmetric key bytes are stored',
+              'no private or symmetric key bytes are stored',
           )
           for marker in required_markers:
               if marker not in source:
                   raise SystemExit(f'missing v0.8 hardening invariant: {marker}')
           for marker in (
               'psycopg', 'sqlalchemy', 'boto3', 'botocore', 'google.cloud', 'azure.',
-              'requests.', 'httpx.', 'subprocess.', '.connect(', '.execute(', '.invoke(', '.execute_tool('
+              'requests.', 'httpx.', 'subprocess.', '.connect(', '.execute(', '.invoke(', '.execute_tool(',
+              'nonce: bytes | None'
           ):
               if marker in source:
                   raise SystemExit(f'v0.8 core must remain offline and adapter-only: {marker}')
