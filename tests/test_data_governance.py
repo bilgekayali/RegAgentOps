@@ -5,6 +5,7 @@ import unittest
 
 import test_mcp as mcp_test_module
 
+from regagentops.approval_engine import ApprovalGate
 from regagentops.approval_models import ApprovalEscalationPolicy
 from regagentops.data_governance import (
     DataCategory,
@@ -17,11 +18,16 @@ from regagentops.data_governance import (
 )
 from regagentops.execution import EmergencyStopRegistry, EmergencyStopState, ExecutionGate, ExecutionLeaseLedger
 from regagentops.models import DataClassification, Decision, RiskTier
+from regagentops.registry import AgentRegistry
 
 NOW = mcp_test_module.NOW
 
 
 class DataPurposeGovernanceTests(unittest.TestCase):
+    @staticmethod
+    def _agents(identity):
+        return AgentRegistry((identity.agent,))
+
     def _stack(self, *, purpose="customer-support", risk=RiskTier.MODERATE, effect=Decision.ALLOW):
         case = mcp_test_module.McpGovernanceTests()
         identity, mcp, server, descriptor, snapshot, binding = case._stack()
@@ -57,7 +63,7 @@ class DataPurposeGovernanceTests(unittest.TestCase):
             retention_seconds=600,
             declared_at=NOW,
         )
-        pep = DataPurposeMcpPolicyEnforcementPoint(case._pep(identity, mcp)._agents, mcp, data)
+        pep = DataPurposeMcpPolicyEnforcementPoint(self._agents(identity), mcp, data)
         outcome = pep.evaluate(
             request,
             policy,
@@ -97,7 +103,7 @@ class DataPurposeGovernanceTests(unittest.TestCase):
         request, policy, data, declaration = stack[4], stack[5], stack[6], stack[8]
         identity, mcp = stack[1], stack[2]
         bad = replace(declaration, observed_data_categories=(DataCategory.FINANCIAL,))
-        pep = DataPurposeMcpPolicyEnforcementPoint(stack[0]._pep(identity, mcp)._agents, mcp, data)
+        pep = DataPurposeMcpPolicyEnforcementPoint(self._agents(identity), mcp, data)
         outcome = pep.evaluate(
             request,
             policy,
@@ -114,7 +120,7 @@ class DataPurposeGovernanceTests(unittest.TestCase):
         request, policy, data, declaration = stack[4], stack[5], stack[6], stack[8]
         identity, mcp = stack[1], stack[2]
         excessive = replace(declaration, retention_seconds=3601)
-        outcome = DataPurposeMcpPolicyEnforcementPoint(stack[0]._pep(identity, mcp)._agents, mcp, data).evaluate(
+        outcome = DataPurposeMcpPolicyEnforcementPoint(self._agents(identity), mcp, data).evaluate(
             request,
             policy,
             identity.signed_identity(),
@@ -129,7 +135,7 @@ class DataPurposeGovernanceTests(unittest.TestCase):
         stack = self._stack()
         request, policy, data = stack[4], stack[5], stack[6]
         identity, mcp = stack[1], stack[2]
-        outcome = DataPurposeMcpPolicyEnforcementPoint(stack[0]._pep(identity, mcp)._agents, mcp, data).evaluate(
+        outcome = DataPurposeMcpPolicyEnforcementPoint(self._agents(identity), mcp, data).evaluate(
             request,
             policy,
             identity.signed_identity(),
@@ -147,13 +153,55 @@ class DataPurposeGovernanceTests(unittest.TestCase):
         self.assertTrue(outcome.mcp_outcome.result.human_approval_required)
         self.assertEqual(outcome.mcp_outcome.result.constraints, ())
         self.assertIn(outcome.data_governance.artifact_digest, outcome.mcp_outcome.authorization.authorization.governance_evidence_digests)
-        requirement = mcp_test_module.ApprovalGate.build_requirement(
+        requirement = ApprovalGate.build_requirement(
             stack[4],
             outcome.mcp_outcome.authorization,
             escalation_policy=ApprovalEscalationPolicy("bank-demo"),
             issued_at=NOW,
         )
         self.assertIsNotNone(requirement)
+
+    def test_v06_mcp_composition_uses_exactly_one_base_pep_evaluation(self):
+        stack = self._stack()
+        case, identity, mcp, request, policy, data, declaration = (
+            stack[0], stack[1], stack[2], stack[4], stack[5], stack[6], stack[8]
+        )
+        base_outcome = case._pep(identity, mcp).evaluate(
+            request,
+            policy,
+            identity.signed_identity(),
+            identity_trust_bundle=identity.trust,
+            evaluated_at=NOW,
+        )
+
+        class SingleCallBase:
+            def __init__(self, outcome):
+                self.outcome = outcome
+                self.calls = 0
+
+            def evaluate(self, *args, **kwargs):
+                self.calls += 1
+                if self.calls > 1:
+                    raise AssertionError("base MCP PEP evaluated more than once")
+                return self.outcome
+
+        pep = DataPurposeMcpPolicyEnforcementPoint(self._agents(identity), mcp, data)
+        spy = SingleCallBase(base_outcome)
+        pep._base = spy
+        governed = pep.evaluate(
+            request,
+            policy,
+            identity.signed_identity(),
+            identity_trust_bundle=identity.trust,
+            data_use=declaration,
+            evaluated_at=NOW,
+        )
+        self.assertEqual(spy.calls, 1)
+        self.assertIsNotNone(governed.data_governance)
+        self.assertIn(
+            governed.data_governance.artifact_digest,
+            governed.mcp_outcome.authorization.authorization.governance_evidence_digests,
+        )
 
     def test_data_governance_drift_invalidates_execution_lease_path(self):
         stack = self._stack()
