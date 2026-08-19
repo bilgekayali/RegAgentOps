@@ -65,7 +65,7 @@ AssuranceApplicabilityAssertion
 
 The context digest lets an operator bind the crosswalk to an inventory, architecture, risk assessment or deployment record without RegAgentOps needing to ingest that document. The registry keys historical scope identity by institution, system, deployment **and context digest**. The same deployment may therefore receive a later scope for a changed context record without rewriting the earlier scope. Reusing the same scope identity with different content fails closed.
 
-A changed context digest creates a new assurance scope and requires new scope-bound applicability/evidence mappings; historical packages remain addressable by their original digests.
+A changed context digest creates a new assurance scope and requires new scope-bound applicability/evidence mappings. A new context for the same deployment cannot be backdated before the latest existing scope record. Historical packages remain addressable by their original digests.
 
 ## Chronological provenance
 
@@ -99,6 +99,8 @@ These timestamps are application evidence, not an independent trusted timestamp 
 - human confirmation basis;
 - confirming human identity; and
 - confirmation time.
+
+For one exact scope/framework/version/reference tuple, v0.7 permits **one immutable applicability assertion**. A contradictory second assertion cannot be introduced under a different assertion ID. A changed applicability judgment therefore requires a new assurance scope/context rather than silently coexisting with an earlier judgment.
 
 RegAgentOps does not infer applicability from prompts, model output, tool metadata, sector, data classification, risk tier or framework text.
 
@@ -140,11 +142,15 @@ Coverage states are deliberately non-compliance terms:
 
 `SUPPORTED` and `PARTIAL` require evidence. `GAP` and `NOT_APPLICABLE` forbid evidence references. An applicable assertion cannot be rewritten as `NOT_APPLICABLE`, and a not-applicable assertion cannot be rewritten as `SUPPORTED`, `PARTIAL` or `GAP`.
 
+Each exact applicability assertion can have **one immutable crosswalk entry** in v0.7. This prevents parallel `SUPPORTED`/`PARTIAL`/`GAP` entries from creating contradictory coverage for the same human assertion. A materially changed mapping belongs to a new assurance scope/context.
+
 The mapping rationale and mapper human identity are mandatory. RegAgentOps does not infer a coverage state from the presence or absence of artifacts.
 
 ## Evidence packages
 
 `AssuranceEvidenceRegistry.build_package()` assembles exact crosswalk-entry, applicability-assertion and evidence-reference digests for one assurance scope. Package verification recomputes those sets from registered entries and rejects substitution or cross-scope evidence. Package assembly must occur at or after every included crosswalk mapping.
+
+Built packages are also registered by institution and `package_id`. Reusing a `package_id` with different content fails closed; verification rejects a package whose digest differs from the already registered identity. Duplicate crosswalk-entry digests are rejected at package input rather than silently deduplicated.
 
 The package contract structurally fixes these non-claims:
 
@@ -179,17 +185,22 @@ The v0.7 registry fails closed when, among other conditions:
 
 - a framework version differs from the pinned v0.7 version;
 - an applicability assertion references an unknown assurance scope;
+- a new context scope is backdated relative to the deployment scope history;
 - applicability confirmation predates the assurance scope;
+- a second applicability assertion conflicts with an existing exact scope/framework/reference;
 - an evidence reference predates the assurance scope;
 - an EU AI Act assertion lacks a human-confirmed operator role;
 - NIST/ISO assertions carry EU operator roles;
 - a crosswalk entry does not match the exact human applicability assertion;
+- a second crosswalk entry targets the same applicability assertion;
 - a crosswalk mapping predates its applicability confirmation or any mapped evidence;
 - applicable/not-applicable status is contradicted by coverage;
 - supported/partial coverage lacks evidence;
 - gap/not-applicable coverage carries evidence;
 - evidence belongs to a different assurance scope;
 - package assembly predates an included crosswalk entry;
+- duplicate crosswalk entries are supplied to package assembly;
+- a `package_id` is reused with different content;
 - a package substitutes its assertion, evidence or framework set; or
 - a package attempts to claim certification, conformity or legal compliance.
 
