@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ContractTests(unittest.TestCase):
     def test_package_version(self):
-        self.assertEqual(regagentops.__version__, "0.4.0")
+        self.assertEqual(regagentops.__version__, "0.5.0")
 
     def test_json_schemas_are_parseable_and_version_pinned(self):
         expected = {
@@ -39,6 +39,12 @@ class ContractTests(unittest.TestCase):
             "mcp-tool-snapshot.schema.json": "regagentops.mcp-tool-snapshot.v1",
             "mcp-tool-binding.schema.json": "regagentops.mcp-tool-binding.v1",
             "mcp-policy-enforcement-result.schema.json": "regagentops.mcp-policy-enforcement-result.v1",
+            "emergency-stop-state.schema.json": "regagentops.emergency-stop-state.v1",
+            "execution-lease.schema.json": "regagentops.execution-lease.v1",
+            "execution-lease-consumption.schema.json": "regagentops.execution-lease-consumption.v1",
+            "execution-trust-bundle.schema.json": "regagentops.execution-trust-bundle.v1",
+            "tool-execution-receipt.schema.json": "regagentops.tool-execution-receipt.v1",
+            "signed-tool-execution-receipt.schema.json": "regagentops.signed-tool-execution-receipt.v1",
         }
         for filename, discriminator in expected.items():
             payload = json.loads((ROOT / "schemas" / filename).read_text(encoding="utf-8"))
