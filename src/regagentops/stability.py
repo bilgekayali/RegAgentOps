@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 import re
 
@@ -89,6 +90,11 @@ def _require_sorted_unique_text(name: str, values: tuple[str, ...]) -> None:
         raise ValueError(f"{name} must contain non-empty text values")
     if len(values) != len(set(values)) or values != tuple(sorted(values)):
         raise ValueError(f"{name} must be unique and canonically sorted")
+
+
+def _parse_time(name: str, value: str) -> datetime:
+    _require_utc_timestamp(name, value)
+    return datetime.fromisoformat(value[:-1] + "+00:00")
 
 
 @dataclass(frozen=True, slots=True)
@@ -388,6 +394,46 @@ class StableReleaseRegistry:
         self._production = production_registry
         self._baselines: dict[str, StableReleaseBaseline] = {}
 
+    @staticmethod
+    def _assert_chronology(
+        baseline: StableReleaseBaseline,
+        *,
+        compatibility_policy: StableCompatibilityPolicy,
+        public_surface: PublicSurfaceManifest,
+        source_release: DeploymentReleaseManifest,
+        production_release: DeploymentReleaseManifest,
+        upgrade_path: SupportedUpgradePath,
+        security_review: IndependentSecurityReviewChecklist,
+        responsibility_scope: LegalAccessibilityResponsibilityScope,
+    ) -> None:
+        source_time = _parse_time("source release created_at", source_release.created_at)
+        target_time = _parse_time("target release created_at", production_release.created_at)
+        if target_time < source_time:
+            raise ValueError("stable target release cannot predate the supported 0.9.x source release")
+        policy_time = _parse_time("compatibility policy declared_at", compatibility_policy.declared_at)
+        surface_time = _parse_time("public surface generated_at", public_surface.generated_at)
+        if surface_time < policy_time:
+            raise ValueError("public surface cannot predate the stable compatibility policy")
+        upgrade_time = _parse_time("upgrade path declared_at", upgrade_path.declared_at)
+        if upgrade_time < max(source_time, target_time):
+            raise ValueError("supported upgrade path cannot predate its exact source or target release")
+        review_time = _parse_time("security review reviewed_at", security_review.reviewed_at)
+        if review_time < target_time:
+            raise ValueError("independent security review cannot predate the exact 1.0 target release")
+        responsibility_time = _parse_time("responsibility scope declared_at", responsibility_scope.declared_at)
+        assembled = _parse_time("stable baseline assembled_at", baseline.assembled_at)
+        latest_dependency = max(
+            policy_time,
+            surface_time,
+            source_time,
+            target_time,
+            upgrade_time,
+            review_time,
+            responsibility_time,
+        )
+        if assembled < latest_dependency:
+            raise ValueError("stable release baseline cannot predate its bound readiness evidence")
+
     def register_baseline(
         self,
         baseline: StableReleaseBaseline,
@@ -439,6 +485,16 @@ class StableReleaseRegistry:
         )
         if production_boundary.artifact_digest != production_release.artifact_digest:
             raise ValueError("production-reference boundary evidence must bind exact release manifest")
+        self._assert_chronology(
+            baseline,
+            compatibility_policy=compatibility_policy,
+            public_surface=public_surface,
+            source_release=source_release,
+            production_release=production_release,
+            upgrade_path=upgrade_path,
+            security_review=security_review,
+            responsibility_scope=responsibility_scope,
+        )
 
         self._baselines[baseline.release_version] = baseline
         return baseline.artifact_digest
@@ -448,3 +504,22 @@ class StableReleaseRegistry:
             return self._baselines[release_version]
         except KeyError as exc:
             raise ValueError("stable release baseline is not registered") from exc
+
+    def assert_baseline_current(
+        self,
+        baseline: StableReleaseBaseline,
+        *,
+        source_release: DeploymentReleaseManifest,
+        production_release: DeploymentReleaseManifest,
+    ) -> None:
+        registered = self.baseline(baseline.release_version)
+        if registered.artifact_digest != baseline.artifact_digest:
+            raise ValueError("stable release baseline does not match the registered exact baseline")
+        if not source_release.release_version.startswith("0.9."):
+            raise ValueError("stable upgrade source release must belong to 0.9.x")
+        if production_release.release_version != STABLE_VERSION:
+            raise ValueError("stable currentness requires the exact 1.0 production release")
+        if baseline.production_release_manifest_digest != production_release.artifact_digest:
+            raise ValueError("stable baseline production release digest mismatch")
+        self._production.assert_release_current(source_release)
+        self._production.assert_release_current(production_release)
