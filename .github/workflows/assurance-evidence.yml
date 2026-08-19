@@ -114,6 +114,12 @@ jobs:
               'legal_compliance_determined',
               'requires_human_review',
               'never determines compliance or applicability',
+              'scope.context_digest',
+              'applicability confirmation cannot predate assurance scope',
+              'assurance evidence cannot predate assurance scope',
+              'assurance mapping cannot predate applicability confirmation',
+              'assurance mapping cannot predate mapped evidence',
+              'assurance package cannot predate its crosswalk entries',
           )
           for marker in required_markers:
               if marker not in source:
