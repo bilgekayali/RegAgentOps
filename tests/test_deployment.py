@@ -230,7 +230,7 @@ class ProductionReferenceDeploymentTests(unittest.TestCase):
             self.registry.register_worker_profile(foreign)
 
     def test_worker_profile_requires_exact_current_tenant_isolation(self):
-        wrong = self.make_worker(tenant_profile_digest="f" * 64)
+        wrong = self.make_worker(version=2, tenant_profile_digest="f" * 64)
         with self.assertRaisesRegex(ValueError, "current tenant isolation"):
             self.registry.register_worker_profile(wrong)
 
