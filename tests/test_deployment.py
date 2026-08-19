@@ -169,15 +169,24 @@ class ProductionReferenceDeploymentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "forbid plaintext"):
             replace(self.egress, allow_plaintext=True)
 
-    def test_egress_rejects_noncanonical_ip_alias(self):
+    def test_egress_rejects_noncanonical_ip_aliases(self):
         with self.assertRaisesRegex(ValueError, "canonical textual form"):
             EgressDestination(
                 destination_id="ipv6-alias",
                 protocol=EgressProtocol.TLS,
                 host="2001:0db8::1",
                 port=443,
-                purpose="Must not bypass exact endpoint identity by textual IP aliasing",
+                purpose="Must not bypass exact endpoint identity by textual IPv6 aliasing",
                 trust_policy_digest="a" * 64,
+            )
+        with self.assertRaisesRegex(ValueError, "canonical IP address"):
+            EgressDestination(
+                destination_id="ipv4-like-alias",
+                protocol=EgressProtocol.TLS,
+                host="010.0.0.1",
+                port=443,
+                purpose="IPv4-like numeric host must not fall through to hostname grammar",
+                trust_policy_digest="b" * 64,
             )
 
     def test_tool_allowlist_is_default_deny_and_one_executor_per_tool(self):
@@ -253,6 +262,19 @@ class ProductionReferenceDeploymentTests(unittest.TestCase):
             self.registry.register_release(self.make_release("release-070", "0.7.0", T2, suffix="a"))
         with self.assertRaisesRegex(ValueError, "different content"):
             self.registry.register_release(replace(old, artifact_sha256="f" * 64))
+
+    def test_new_release_registration_fails_closed_after_egress_drift(self):
+        self.registry.register_egress_policy(self.make_egress(version=2, registered_at=T2, host="kms2.bank.example"))
+        release = self.make_release("release-090", "0.9.0", T3, suffix="b", commit="b" * 40)
+        with self.assertRaisesRegex(ValueError, "egress policy is stale"):
+            self.registry.register_release(release)
+
+    def test_exact_worker_and_release_retry_remain_idempotent_after_drift(self):
+        release = self.make_release("release-080", "0.8.0", T1)
+        self.registry.register_release(release)
+        self.registry.register_egress_policy(self.make_egress(version=2, registered_at=T2, host="kms2.bank.example"))
+        self.assertEqual(self.registry.register_worker_profile(self.worker), self.worker.artifact_digest)
+        self.assertEqual(self.registry.register_release(release), release.artifact_digest)
 
     def test_release_currentness_fails_closed_after_egress_drift(self):
         release = self.make_release("release-080", "0.8.0", T1)
