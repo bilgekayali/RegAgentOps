@@ -1,0 +1,83 @@
+from __future__ import annotations
+
+from dataclasses import replace
+import unittest
+
+import test_mcp as mcp_test_module
+
+from regagentops.mcp import McpToolBinding
+from regagentops.models import Decision
+
+
+class McpHardeningTests(unittest.TestCase):
+    def test_server_version_cannot_move_backward_in_time(self):
+        _, registry, server, _, _, _ = mcp_test_module.McpGovernanceTests()._stack()
+        with self.assertRaisesRegex(ValueError, "cannot predate"):
+            registry.register_server(
+                replace(
+                    server,
+                    server_version=2,
+                    metadata_digest=mcp_test_module._digest("server-v2"),
+                    registered_at="2026-01-01T00:03:59Z",
+                )
+            )
+
+    def test_binding_cannot_predate_snapshot(self):
+        _, registry, _, _, snapshot, binding = mcp_test_module.McpGovernanceTests()._stack()
+        with self.assertRaisesRegex(ValueError, "cannot predate its governed tool snapshot"):
+            registry.register_binding(
+                McpToolBinding(
+                    institution_id=binding.institution_id,
+                    binding_id="predated-binding",
+                    binding_version=1,
+                    server_id=binding.server_id,
+                    server_registration_digest=binding.server_registration_digest,
+                    tool_snapshot_digest=binding.tool_snapshot_digest,
+                    tool_descriptor_digest=binding.tool_descriptor_digest,
+                    governed_tool_id=binding.governed_tool_id,
+                    allowed_data_classifications=binding.allowed_data_classifications,
+                    production_registered=binding.production_registered,
+                    enabled=binding.enabled,
+                    registered_at="2026-01-01T00:04:19Z",
+                )
+            )
+        self.assertEqual(snapshot.captured_at, "2026-01-01T00:04:20Z")
+
+    def test_pep_result_preserves_constraints_and_approval_flag(self):
+        identity, registry, _, _, _, binding = mcp_test_module.McpGovernanceTests()._stack()
+        request = mcp_test_module.McpGovernanceTests()._request(binding)
+        constrained = mcp_test_module.McpGovernanceTests()._policy(binding, effect=Decision.ALLOW_WITH_CONSTRAINTS)
+        rule = constrained.rules[0]
+        constrained = replace(constrained, rules=(replace(rule, constraints=("read-only",)),))
+        outcome = mcp_test_module.McpGovernanceTests()._pep(identity, registry).evaluate(
+            request,
+            constrained,
+            identity.signed_identity(),
+            identity_trust_bundle=identity.trust,
+            evaluated_at=mcp_test_module.NOW,
+        )
+        self.assertEqual(outcome.result.decision, Decision.ALLOW_WITH_CONSTRAINTS)
+        self.assertEqual(outcome.result.constraints, ("read-only",))
+        self.assertFalse(outcome.result.human_approval_required)
+        self.assertTrue(outcome.result.execution_permitted)
+
+        approval_request = mcp_test_module.McpGovernanceTests()._request(binding, risk=mcp_test_module.RiskTier.HIGH)
+        approval_policy = mcp_test_module.McpGovernanceTests()._policy(
+            binding,
+            effect=Decision.REQUIRE_HUMAN_APPROVAL,
+            risk=mcp_test_module.RiskTier.HIGH,
+        )
+        approval_outcome = mcp_test_module.McpGovernanceTests()._pep(identity, registry).evaluate(
+            approval_request,
+            approval_policy,
+            identity.signed_identity(),
+            identity_trust_bundle=identity.trust,
+            evaluated_at=mcp_test_module.NOW,
+        )
+        self.assertTrue(approval_outcome.result.human_approval_required)
+        self.assertFalse(approval_outcome.result.execution_permitted)
+        self.assertEqual(approval_outcome.result.constraints, ())
+
+
+if __name__ == "__main__":
+    unittest.main()
