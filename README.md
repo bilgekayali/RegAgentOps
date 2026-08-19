@@ -4,21 +4,25 @@
 
 RegAgentOps is an open-source reference architecture for deciding, constraining, recording, reviewing, crosswalking, cryptographically hardening and production-scoping AI-agent governance evidence before and after enterprise actions.
 
-Current version: **v0.9.0 — Production Reference Deployment**.
+Source package version: **1.0.0 — Stable Governance Reference**.
 
-## Summary
+> **Release-readiness note:** the v1 code/contract boundary can be technically complete and merge-ready without implying that an independent human security review has occurred. The `v1.0.0` tagged-release workflow remains fail-closed until a genuine `security-review/v1.0-review.json` artefact is supplied.
 
-RegAgentOps addresses four bounded control questions:
+## What RegAgentOps controls
+
+RegAgentOps addresses five bounded questions:
 
 > Under which authenticated identity, purpose, data-governance profile, policy, tool, delegated authority, human approval, governed MCP, emergency-stop and one-time execution conditions may an AI agent continue toward a specific enterprise action?
 
-> For one exact AI-system/deployment scope, which human-confirmed framework references are considered applicable, which exact governance-evidence digests map to them, and where are the evidence gaps?
+> Which human-confirmed assurance references and exact evidence digests apply to one AI-system/deployment scope, and where are the evidence gaps?
 
-> Which exact tenant/RLS/key/configuration/encryption/audit-anchor artefacts must a production adapter bind so that tenant separation and cryptographic custody are explicit rather than implicit?
+> Which exact tenant/RLS/key/configuration/encryption/audit-anchor artefacts must a production adapter bind?
 
-> Which exact worker isolation, egress/tool allowlists, release provenance, rollback/upgrade and recovery artefacts must be current before a production controller may promote a release?
+> Which worker-isolation, egress/tool-allowlist, release-provenance, rollback/upgrade and recovery artefacts must be current before a production controller may promote a release?
 
-The project is designed for regulated and high-assurance environments. It is **not** an autonomous agent framework, credential broker, generic MCP proxy, identity provider, DLP scanner, legal rules engine, certification body, production orchestrator, Kubernetes client, KMS/HSM client, firewall manager, external immutable-log service or compliance-determination product.
+> Which Python API, CLI and JSON-contract surfaces are stable in major version 1, and which evidence is required before a `v1.0.0` release may be treated as stable-tag eligible?
+
+The project is **not** an autonomous agent framework, credential broker, generic MCP proxy, DLP scanner, legal rules engine, certification body, production orchestrator, KMS/HSM client, firewall manager, immutable-log service, accessibility-certification service or compliance-determination product.
 
 ## Control planes
 
@@ -41,163 +45,178 @@ existing governance/evidence -> AssuranceScope
           |
 human applicability -> exact evidence crosswalk -> AssuranceEvidencePackage
 
-TENANT / CRYPTO HARDENING
+TENANT / CRYPTO
 PostgreSQL RLS refs + tenant profile
-KMS/HSM key refs + append-only lifecycle
-signed configuration changes
-AES-256-GCM evidence envelopes
-external audit-anchor receipts
+KMS/HSM refs + one-way lifecycle
+signed config changes + AES-256-GCM evidence + external anchors
 
 PRODUCTION REFERENCE
-current v0.8 tenant-isolation profile
-exact default-deny egress + tool allowlist
+current tenant isolation + exact default-deny egress/tool policy
           |
 isolated non-invoking policy-worker profile
           |
-release manifest
-(source commit + artifact + CodeQL + provenance + checksum evidence)
+DeploymentReleaseManifest
+(source + artifact + CodeQL + provenance + checksum)
           |
 upgrade <-> exact rollback + recovery checkpoint
+
+V1 STABILITY / RELEASE READINESS
+compatibility policy + public surface + schema baseline
+          |
+exact current 0.9.x source -> exact current 1.0.0 target
+          |
+independent review + responsibility scope
+          |
+all v0.1-v0.9 boundary evidence
+          |
+StableReleaseBaseline
 ```
 
 Policy precedence remains:
 
 `DENY > REQUIRE_HUMAN_APPROVAL > ALLOW_WITH_CONSTRAINTS > ALLOW`
 
-No v0.7-v0.9 assurance/hardening/deployment artefact can widen an authorization decision, override a denial or directly invoke a tool.
+Assurance, hardening, deployment and stability artefacts never widen authorization or become tool-execution authority.
 
-## v0.9 production-reference deployment boundary
+## v1 stable compatibility boundary
 
-### Isolated policy-enforcement worker
+### Python
 
-`IsolatedPolicyWorkerProfile` requires isolated network namespace, non-root execution, read-only root filesystem, no-new-privileges, all Linux capabilities dropped, `RuntimeDefault` seccomp, no privileged/host namespaces and **no direct tool invocation**.
+Only symbols re-exported by **`regagentops.api`** are covered by the v1 public Python compatibility guarantee. Internal modules remain inspectable/importable, but direct internal imports are not stable merely because they are accessible.
 
-`ProductionDeploymentRegistry` receives the v0.8 `TenantIsolationRegistry`. Worker registration must bind the exact **current** tenant-isolation profile together with exact current tenant egress/tool policies; a foreign, unknown or superseded tenant profile fails closed. Worker timestamps cannot predate those dependencies.
+The exact baseline is committed in `compatibility/v1-public-api.json`.
 
-These are reference requirements. RegAgentOps does not deploy a container or independently prove that a runtime applied them.
+### CLI
 
-### Strict egress and tool allowlisting
+The stable v1 CLI commands are:
 
-`EgressPolicy` is tenant-scoped, append-only, versioned and always default deny. It permits only exact `https`/`tls` host+port destinations, forbids wildcard destinations and plaintext transport, binds external trust-policy evidence, and requires canonical textual form for IP endpoints so equivalent IP aliases cannot bypass exact endpoint identity.
+```bash
+regagentops contract-snapshot
+regagentops demo-decision
+```
 
-`ToolAllowlistPolicy` is also default deny. One governed tool can map to one exact external executor per policy version. The policy worker itself remains non-invoking.
+`contract-snapshot` outputs deterministic machine-readable version/API/CLI/schema-baseline information and performs no execution.
 
-### Release and currentness evidence
+### JSON
 
-`DeploymentReleaseManifest` binds strict semantic version, exact source Git SHA, artifact SHA-256, worker/configuration digest, CodeQL evidence digest, provenance-attestation digest and checksum-manifest digest. A release cannot predate its worker profile.
+`compatibility/v1-schema-baseline.json` pins the v1 schema files and `schema_version` discriminators. Within major version 1, baseline schemas cannot silently disappear or change discriminator. Breaking public-surface removals require a new major version; planned removals require at least two minor releases of deprecation.
 
-`ProductionDeploymentRegistry.assert_release_current()` fails closed if the bound worker profile, egress policy, tool allowlist **or v0.8 tenant-isolation profile** has been superseded. Policy/RLS changes therefore require a new worker/release binding rather than silently reusing stale release evidence.
+See [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 
-### Upgrade, rollback and recovery
+## Stable release baseline
 
-A `RollbackPlan` must point from a newer registered release to an older registered release and bind trigger/verification evidence. An `UpgradePlan` requires a newer target and a registered rollback plan that **exactly reverses** the proposed transition. `RecoveryCheckpoint` binds exact release/configuration to encrypted-backup, external-audit-anchor and restore-verification evidence.
+`StableReleaseBaseline` binds:
+
+- exact compatibility-policy and public-surface digests;
+- exact current 1.0 `DeploymentReleaseManifest`;
+- exact final 0.9.x → 1.0 upgrade-path evidence;
+- exact independent-security-review checklist;
+- exact legal/accessibility responsibility scope;
+- exact reproducible checksum and provenance evidence; and
+- evidence for all nine governance boundaries delivered from v0.1 through v0.9.
+
+`StableReleaseRegistry` reuses `ProductionDeploymentRegistry` currentness. A stale worker, egress policy, tool allowlist or tenant-isolation profile makes current stable eligibility fail closed. Baseline chronology also prevents review/upgrade/release evidence from being backfilled after the represented stable baseline.
+
+See [docs/STABLE_RELEASE.md](docs/STABLE_RELEASE.md) and [docs/UPGRADE_V1.md](docs/UPGRADE_V1.md).
+
+## Independent security-review blocker
+
+The v1 contract defines twelve required independent-review areas. Every item must be `closed` or explicitly `risk_accepted`; risk acceptance requires an accountable human identity and exact evidence digest.
+
+The repository intentionally does **not** pre-populate a fake completed review. `v1.0.0` tagging remains blocked until `security-review/v1.0-review.json` is supplied by a genuine review/risk-acceptance process.
+
+A PR merge approval is not silently interpreted as independent security review or item-level risk acceptance.
+
+See [docs/SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md).
+
+## Reproducible build and provenance
+
+The Release Provenance Gate builds the wheel twice from the same source with `SOURCE_DATE_EPOCH` set to the commit timestamp. Both wheel SHA-256 values must match before `SHA256SUMS` is generated.
+
+Version-matching `v*` tagged releases use GitHub artifact attestations for the wheel and checksum manifest. Build provenance is supply-chain evidence, not proof that software is vulnerability-free or fit for a particular deployment.
+
+## Legal and accessibility boundary
+
+The v1 responsibility contract structurally states that RegAgentOps does not provide legal advice, determine regulatory compliance, claim certification/conformity, or claim accessibility conformance. Institutions remain responsible for legal, privacy/data-protection, accessibility, records-retention, jurisdiction-role and production-IAM review.
+
+See [docs/LEGAL_ACCESSIBILITY.md](docs/LEGAL_ACCESSIBILITY.md).
+
+## v0.9 production-reference boundary retained
+
+`IsolatedPolicyWorkerProfile` requires non-root execution, read-only root filesystem, no-new-privileges, all Linux capabilities dropped, `RuntimeDefault` seccomp, no privileged/host namespaces and no direct tool invocation.
+
+`EgressPolicy` and `ToolAllowlistPolicy` are tenant-scoped and default deny. Worker registration resolves the exact current v0.8 tenant-isolation profile, exact current egress policy and exact current tool allowlist. `DeploymentReleaseManifest` binds semantic version, source commit, artifact digest, configuration/worker digest, CodeQL evidence, provenance and checksum evidence.
+
+`assert_release_current()` fails closed after worker/egress/tool/tenant-isolation drift.
 
 See [docs/PRODUCTION_REFERENCE.md](docs/PRODUCTION_REFERENCE.md).
 
-## CodeQL and release provenance
-
-The repository includes:
-
-- **CodeQL** advanced Python analysis with the `security-extended` query suite;
-- **Release Provenance Gate** that builds the wheel and deterministic `SHA256SUMS` on pull requests; and
-- tag-scoped GitHub artifact attestations for version-matching `v*` release builds.
-
-Build provenance is supply-chain evidence, not a claim that an artifact is vulnerability-free or production-safe.
-
-## Operational runbooks
-
-v0.9 includes accountable-operator runbooks for [deployment](docs/runbooks/DEPLOYMENT.md), [incident response](docs/runbooks/INCIDENT_RESPONSE.md), [KMS/HSM key rotation](docs/runbooks/KEY_ROTATION.md) and [disaster recovery](docs/runbooks/DISASTER_RECOVERY.md). They define preconditions, abort criteria and retained evidence; they do not automate privileged production actions.
-
 ## Earlier boundaries retained
 
-- **v0.8 Tenant and Cryptographic Hardening:** PostgreSQL RLS reference DDL, tenant profiles, KMS/HSM-only key references, one-way key lifecycle, signed configuration changes, tenant-scoped AES-GCM evidence and external audit anchoring. See [docs/TENANT_CRYPTO_HARDENING.md](docs/TENANT_CRYPTO_HARDENING.md).
-- **v0.7 Assurance Evidence:** human-reviewed NIST AI RMF 1.0, ISO/IEC 42001:2023 and Regulation (EU) 2024/1689 evidence mapping with explicit non-certification semantics. See [docs/ASSURANCE_EVIDENCE.md](docs/ASSURANCE_EVIDENCE.md).
-- **v0.6 Data and Purpose Governance:** exact resource/data-use/purpose/output/retention controls and execution-time drift checks. See [docs/DATA_PURPOSE_GOVERNANCE.md](docs/DATA_PURPOSE_GOVERNANCE.md).
-- **v0.5 Signed Execution Receipts:** short-lived executor-bound one-time leases, emergency stop and domain-separated signed receipts. See [docs/EXECUTION_RECEIPTS.md](docs/EXECUTION_RECEIPTS.md).
-- **v0.4 MCP Governance:** approved/pinned servers, bounded snapshots and explicit governed tool bindings. See [docs/MCP_GOVERNANCE.md](docs/MCP_GOVERNANCE.md).
+- **v0.8 Tenant/Crypto:** PostgreSQL RLS reference DDL, tenant profiles, KMS/HSM-only references, one-way key lifecycle, signed configuration changes, tenant-scoped AES-GCM and audit anchoring. See [docs/TENANT_CRYPTO_HARDENING.md](docs/TENANT_CRYPTO_HARDENING.md).
+- **v0.7 Assurance:** human-reviewed NIST AI RMF 1.0, ISO/IEC 42001:2023 and Regulation (EU) 2024/1689 evidence mapping with explicit non-certification semantics. See [docs/ASSURANCE_EVIDENCE.md](docs/ASSURANCE_EVIDENCE.md).
+- **v0.6 Data/Purpose:** exact resource/data-use/purpose/output/retention controls. See [docs/DATA_PURPOSE_GOVERNANCE.md](docs/DATA_PURPOSE_GOVERNANCE.md).
+- **v0.5 Execution Receipts:** short-lived executor-bound one-time leases, emergency stop and signed receipts. See [docs/EXECUTION_RECEIPTS.md](docs/EXECUTION_RECEIPTS.md).
+- **v0.4 MCP:** approved/pinned servers, bounded snapshots and explicit governed tool bindings. See [docs/MCP_GOVERNANCE.md](docs/MCP_GOVERNANCE.md).
 - **v0.3 Human Approval:** requester/approver separation, delegated authority, signatures and replay prevention. See [docs/APPROVALS.md](docs/APPROVALS.md).
-- **v0.2 Authenticated Identity:** offline pinned OIDC/JWKS verification and institution-signed workload/authenticated context. See [docs/IDENTITY.md](docs/IDENTITY.md).
-
-## Safety baseline
-
-RegAgentOps v0.9 remains evidence/control focused:
-
-- default deny for authorization, egress and tool dispatch;
-- no autonomous resource, purpose, MCP-tool, egress-target or framework discovery;
-- no production tool invocation from the governance/policy worker;
-- no network/process capability in governed core modules;
-- no embedded production credentials, private signing keys or symmetric evidence keys;
-- worker registration resolves current tenant isolation plus current egress/tool policies;
-- release evidence binds source, artifact, CodeQL, provenance and checksum digests;
-- stale worker/egress/tool/tenant-isolation state invalidates release currentness;
-- worker and release evidence cannot be backdated before their dependencies;
-- upgrade cannot advertise a rollback path that does not exactly reverse the transition;
-- historical backup/release evidence cannot justify weakening current RLS/egress/tool/key controls;
-- human approval cannot override identity, policy or data-governance denial;
-- signatures, receipts and attestations protect represented evidence/provenance but do not independently prove runtime truth or software safety;
-- no compliance, certification, supervisory-acceptance or production-fitness claim.
+- **v0.2 Identity:** offline pinned OIDC/JWKS verification and institution-signed workload/authenticated context. See [docs/IDENTITY.md](docs/IDENTITY.md).
 
 ## Quick start
 
 ```bash
 python -m pip install -e .
 regagentops --version
+regagentops contract-snapshot
 regagentops demo-decision
 ```
 
-The CLI demo is synthetic and offline. It performs no tool execution and makes no network call.
+Both CLI commands are synthetic/offline and perform no enterprise tool execution.
 
 ## Repository map
 
 ```text
 src/regagentops/
+  api.py                       stable v1 Python façade
+  stability.py                 stable compatibility/review/release baseline
   models.py                    authorization artefacts and digests
   authenticated_policy.py      identity-gated authorization
-  approval_*.py                human approval/delegation/signature/replay
+  approval_*.py                approval/delegation/signature/replay
   mcp.py                       governed MCP adapter
   execution.py                 one-time leases and signed receipts
   data_governance.py           data/purpose/output/retention governance
   assurance.py                 human-reviewed assurance crosswalks
   hardening.py                 tenant/RLS/key/config/encryption/anchor boundary
-  deployment.py                v0.9 production-reference deployment contracts
-  cli.py                       offline synthetic demo
+  deployment.py                production-reference deployment contracts
+  cli.py                       offline CLI
+
+compatibility/
+  v1-public-api.json
+  v1-schema-baseline.json
+
+security-review/
+  README.md                    real v1 review evidence location
 
 schemas/
-  ... v0.1-v0.8 contracts ...
-  egress-policy.schema.json
-  tool-allowlist-policy.schema.json
-  isolated-policy-worker-profile.schema.json
-  deployment-release-manifest.schema.json
-  rollback-plan.schema.json
-  upgrade-plan.schema.json
-  recovery-checkpoint.schema.json
-
-docs/
-  PRODUCTION_REFERENCE.md
-  runbooks/DEPLOYMENT.md
-  runbooks/INCIDENT_RESPONSE.md
-  runbooks/KEY_ROTATION.md
-  runbooks/DISASTER_RECOVERY.md
-  ... earlier boundary documentation ...
+  ... v0.1-v0.9 contracts ...
+  stable-compatibility-policy.schema.json
+  public-surface-manifest.schema.json
+  supported-upgrade-path.schema.json
+  independent-security-review-checklist.schema.json
+  legal-accessibility-responsibility-scope.schema.json
+  stable-release-baseline.schema.json
 ```
 
 ## CI boundary
 
-GitHub Actions tests Python 3.11/3.12/3.13, compiles the package and performs clean-wheel smoke testing. Dedicated identity, approval, MCP, execution, data-purpose, assurance, tenant/crypto and production-reference workflows pin their respective invariants. CodeQL and Release Provenance are separate gates so application regressions, static security analysis and supply-chain evidence remain distinct control surfaces.
-
-## Roadmap
-
-`v0.1 authorization → v0.2 authenticated identity → v0.3 human approval → v0.4 MCP → v0.5 execution receipts → v0.6 data/purpose → v0.7 assurance → v0.8 tenant/crypto → v0.9 production reference → v1.0 stable release`
-
-See [docs/ROADMAP.md](docs/ROADMAP.md).
+GitHub Actions tests Python 3.11/3.12/3.13, clean-wheel installation, all historical boundary regressions, CodeQL, release reproducibility/provenance and a dedicated **Stable Governance Reference Boundary**. The v1 compatibility gate compares runtime API/CLI/schema state to committed baselines.
 
 ## Security
 
-See [SECURITY.md](SECURITY.md), [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md), [docs/PRODUCTION_REFERENCE.md](docs/PRODUCTION_REFERENCE.md) and the boundary-specific documents linked above.
+See [SECURITY.md](SECURITY.md), [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md), [docs/SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md), [docs/STABLE_RELEASE.md](docs/STABLE_RELEASE.md) and boundary-specific documents above.
 
 ## Explicit non-claims
 
-RegAgentOps v0.9 does **not** by itself prove deployed RLS/firewall/network/container enforcement, actual KMS/HSM hardware custody, CodeQL alert acceptance, external provenance verification, backup restorability, RTO/RPO attainment, external anchor immutability, secure cloud/database administration, regulatory compliance, certification, supervisory acceptance or production fitness.
+RegAgentOps 1.0 does **not** by itself prove deployed RLS/firewall/container enforcement, actual KMS/HSM hardware custody, external anchor immutability, backup restorability, regulator acceptance, legal sufficiency, accessibility conformance, regulatory compliance, certification or production fitness. It also does not autonomously invoke enterprise tools from the governed core.
 
 ## License
 
