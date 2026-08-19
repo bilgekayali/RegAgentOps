@@ -1,0 +1,148 @@
+name: Tenant and Cryptographic Hardening Boundary
+
+on:
+  push:
+    branches:
+      - main
+      - "agent/**"
+    paths:
+      - "src/regagentops/hardening.py"
+      - "tests/test_hardening*.py"
+      - "schemas/postgres-rls-policy.schema.json"
+      - "schemas/tenant-isolation-profile.schema.json"
+      - "schemas/institution-crypto-key-reference.schema.json"
+      - "schemas/configuration-change-request.schema.json"
+      - "schemas/signed-configuration-change.schema.json"
+      - "schemas/encrypted-governance-evidence.schema.json"
+      - "schemas/audit-anchor-*.json"
+      - "schemas/external-audit-anchor-receipt.schema.json"
+      - "pyproject.toml"
+      - "README.md"
+      - "docs/TENANT_CRYPTO_HARDENING.md"
+      - "docs/ARCHITECTURE.md"
+      - "docs/ROADMAP.md"
+      - "docs/THREAT_MODEL.md"
+      - ".github/workflows/tenant-crypto-hardening.yml"
+  pull_request:
+    paths:
+      - "src/regagentops/hardening.py"
+      - "tests/test_hardening*.py"
+      - "schemas/postgres-rls-policy.schema.json"
+      - "schemas/tenant-isolation-profile.schema.json"
+      - "schemas/institution-crypto-key-reference.schema.json"
+      - "schemas/configuration-change-request.schema.json"
+      - "schemas/signed-configuration-change.schema.json"
+      - "schemas/encrypted-governance-evidence.schema.json"
+      - "schemas/audit-anchor-*.json"
+      - "schemas/external-audit-anchor-receipt.schema.json"
+      - "pyproject.toml"
+      - "README.md"
+      - "docs/TENANT_CRYPTO_HARDENING.md"
+      - "docs/ARCHITECTURE.md"
+      - "docs/ROADMAP.md"
+      - "docs/THREAT_MODEL.md"
+      - ".github/workflows/tenant-crypto-hardening.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  tenant-crypto-hardening-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install package
+        run: python -m pip install -e .
+      - name: Run tenant and crypto hardening regression tests
+        run: python -m unittest discover -s tests -p 'test_hardening*.py' -v
+      - name: Verify v0.8+ hardening contracts
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import tomllib
+
+          payload = tomllib.load(open('pyproject.toml', 'rb'))
+          version = tuple(int(part) for part in payload['project']['version'].split('.'))
+          assert version >= (0, 8, 0)
+          assert payload['project']['dependencies'] == ['PyJWT[crypto]>=2.13,<3']
+          expected = {
+              'postgres-rls-policy.schema.json': 'regagentops.postgres-rls-policy.v1',
+              'tenant-isolation-profile.schema.json': 'regagentops.tenant-isolation-profile.v1',
+              'institution-crypto-key-reference.schema.json': 'regagentops.institution-crypto-key-reference.v1',
+              'configuration-change-request.schema.json': 'regagentops.configuration-change-request.v1',
+              'signed-configuration-change.schema.json': 'regagentops.signed-configuration-change.v1',
+              'encrypted-governance-evidence.schema.json': 'regagentops.encrypted-governance-evidence.v1',
+              'audit-anchor-batch.schema.json': 'regagentops.audit-anchor-batch.v1',
+              'external-audit-anchor-receipt.schema.json': 'regagentops.external-audit-anchor-receipt.v1',
+              'audit-anchor-record.schema.json': 'regagentops.audit-anchor-record.v1',
+          }
+          for filename, discriminator in expected.items():
+              schema = json.loads((Path('schemas') / filename).read_text(encoding='utf-8'))
+              assert schema['$schema'] == 'https://json-schema.org/draft/2020-12/schema'
+              assert schema['additionalProperties'] is False
+              assert schema['properties']['schema_version']['const'] == discriminator
+
+          rls = json.loads(Path('schemas/postgres-rls-policy.schema.json').read_text())
+          assert rls['properties']['force_row_level_security']['const'] is True
+          key = json.loads(Path('schemas/institution-crypto-key-reference.schema.json').read_text())
+          assert key['properties']['custody']['enum'] == ['kms', 'hsm']
+          assert 'private_key' not in key['properties'] and 'symmetric_key' not in key['properties']
+          signed = json.loads(Path('schemas/signed-configuration-change.schema.json').read_text())
+          assert signed['properties']['algorithm']['const'] == 'Ed25519'
+          encrypted = json.loads(Path('schemas/encrypted-governance-evidence.schema.json').read_text())
+          assert encrypted['properties']['algorithm']['const'] == 'AES-256-GCM'
+          PY
+      - name: Verify adapter-only fail-closed hardening surface
+        shell: bash
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          path = Path('src/regagentops/hardening.py')
+          source = path.read_text(encoding='utf-8')
+          tree = ast.parse(source, filename=str(path))
+          banned = {'asyncio', 'ftplib', 'http', 'requests', 'socket', 'subprocess', 'telnetlib', 'urllib'}
+          for node in ast.walk(tree):
+              if isinstance(node, ast.Import):
+                  roots = {alias.name.split('.')[0] for alias in node.names}
+              elif isinstance(node, ast.ImportFrom) and node.module:
+                  roots = {node.module.split('.')[0]}
+              else:
+                  continue
+              blocked = roots & banned
+              if blocked:
+                  raise SystemExit(f'{path}: forbidden capability import(s): {sorted(blocked)}')
+
+          required_markers = (
+              'FORCE ROW LEVEL SECURITY',
+              'WITH CHECK',
+              "current_setting('",
+              'CryptoKeyCustody',
+              'KMS',
+              'HSM',
+              'regagentops.configuration-change.v1',
+              'regagentops.tenant-encrypted-governance-evidence.v1',
+              'AES-256-GCM',
+              'configuration change does not extend the exact tenant change chain',
+              'external anchor receipt does not bind the exact audit batch',
+              'private or symmetric key bytes are stored',
+          )
+          for marker in required_markers:
+              if marker not in source:
+                  raise SystemExit(f'missing v0.8 hardening invariant: {marker}')
+          for marker in (
+              'psycopg', 'sqlalchemy', 'boto3', 'botocore', 'google.cloud', 'azure.',
+              'requests.', 'httpx.', 'subprocess.', '.connect(', '.execute(', '.invoke(', '.execute_tool('
+          ):
+              if marker in source:
+                  raise SystemExit(f'v0.8 core must remain offline and adapter-only: {marker}')
+          upper = source.upper()
+          if 'PRIVATE_KEY' in upper or 'SYMMETRIC_KEY' in upper:
+              raise SystemExit('v0.8 artifacts must not embed private or symmetric key material fields')
+          PY
