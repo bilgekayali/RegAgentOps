@@ -259,6 +259,7 @@ class AssuranceEvidenceRegistry:
         self._assertions: dict[tuple[str, str], AssuranceApplicabilityAssertion] = {}
         self._evidence: dict[tuple[str, str], AssuranceEvidenceReference] = {}
         self._entries: dict[tuple[str, str], AssuranceCrosswalkEntry] = {}
+        self._packages: dict[tuple[str, str], AssuranceEvidencePackage] = {}
 
     @staticmethod
     def _same_or_conflict(existing, candidate, label: str) -> str:
@@ -271,6 +272,17 @@ class AssuranceEvidenceRegistry:
         existing = self._scopes.get(key)
         if existing is not None:
             return self._same_or_conflict(existing, scope, "assurance scope")
+        history = tuple(
+            item
+            for (institution_id, system_id, deployment_id, _), item in self._scopes.items()
+            if institution_id == scope.institution_id
+            and system_id == scope.system_id
+            and deployment_id == scope.deployment_id
+        )
+        if history:
+            latest = max(_parse_time("scope recorded_at", item.recorded_at) for item in history)
+            if _parse_time("scope recorded_at", scope.recorded_at) < latest:
+                raise ValueError("new assurance scope context cannot predate existing deployment scope history")
         self._scopes[key] = scope
         return scope.artifact_digest
 
@@ -288,6 +300,17 @@ class AssuranceEvidenceRegistry:
         existing = self._assertions.get(key)
         if existing is not None:
             return self._same_or_conflict(existing, assertion, "applicability assertion")
+        conflict = tuple(
+            item
+            for (institution_id, _), item in self._assertions.items()
+            if institution_id == assertion.institution_id
+            and item.scope_digest == assertion.scope_digest
+            and item.framework is assertion.framework
+            and item.framework_version == assertion.framework_version
+            and item.reference_id == assertion.reference_id
+        )
+        if conflict:
+            raise ValueError("exact assurance scope/framework reference already has an applicability assertion")
         self._assertions[key] = assertion
         return assertion.artifact_digest
 
@@ -347,6 +370,12 @@ class AssuranceEvidenceRegistry:
         existing = self._entries.get(key)
         if existing is not None:
             return self._same_or_conflict(existing, entry, "assurance crosswalk entry")
+        if any(
+            institution_id == entry.institution_id
+            and item.applicability_assertion_digest == entry.applicability_assertion_digest
+            for (institution_id, _), item in self._entries.items()
+        ):
+            raise ValueError("exact applicability assertion already has a crosswalk entry")
         self._entries[key] = entry
         return entry.artifact_digest
 
@@ -357,6 +386,7 @@ class AssuranceEvidenceRegistry:
             "applicability_assertions": sorted(item.artifact_digest for (scope_id, _), item in self._assertions.items() if scope_id == institution_id),
             "evidence_references": sorted(item.artifact_digest for (scope_id, _), item in self._evidence.items() if scope_id == institution_id),
             "crosswalk_entries": sorted(item.artifact_digest for (scope_id, _), item in self._entries.items() if scope_id == institution_id),
+            "evidence_packages": sorted(item.artifact_digest for (scope_id, _), item in self._packages.items() if scope_id == institution_id),
         })
 
     def build_package(
@@ -372,16 +402,18 @@ class AssuranceEvidenceRegistry:
         self._scope_by_digest(institution_id, scope_digest)
         if not crosswalk_entry_digests:
             raise ValueError("assurance package requires at least one crosswalk entry")
+        if len(crosswalk_entry_digests) != len(set(crosswalk_entry_digests)):
+            raise ValueError("assurance package crosswalk entry digests must be unique")
         entries = tuple(self._entry_by_digest(institution_id, digest) for digest in crosswalk_entry_digests)
         if any(entry.scope_digest != scope_digest for entry in entries):
             raise ValueError("assurance package entries must belong to one exact scope")
         if any(_parse_time("assembled_at", assembled_at) < _parse_time("mapped_at", entry.mapped_at) for entry in entries):
             raise ValueError("assurance package cannot predate its crosswalk entries")
-        entry_digests = tuple(sorted({entry.artifact_digest for entry in entries}))
+        entry_digests = tuple(sorted(entry.artifact_digest for entry in entries))
         assertion_digests = tuple(sorted({entry.applicability_assertion_digest for entry in entries}))
         evidence_digests = tuple(sorted({digest for entry in entries for digest in entry.evidence_reference_digests}))
         frameworks = tuple(sorted({entry.framework for entry in entries}, key=lambda value: value.value))
-        return AssuranceEvidencePackage(
+        package = AssuranceEvidencePackage(
             package_id=package_id,
             institution_id=institution_id,
             scope_digest=scope_digest,
@@ -392,9 +424,20 @@ class AssuranceEvidenceRegistry:
             assembled_by_human_id=assembled_by_human_id,
             assembled_at=assembled_at,
         )
+        key = (institution_id, package_id)
+        existing = self._packages.get(key)
+        if existing is not None:
+            if existing.artifact_digest != package.artifact_digest:
+                raise ValueError("assurance evidence package identity already exists with different content")
+            return existing
+        self._packages[key] = package
+        return package
 
     def verify_package(self, package: AssuranceEvidencePackage) -> None:
         self._scope_by_digest(package.institution_id, package.scope_digest)
+        registered = self._packages.get((package.institution_id, package.package_id))
+        if registered is not None and registered.artifact_digest != package.artifact_digest:
+            raise ValueError("assurance evidence package does not match registered package identity")
         entries = tuple(self._entry_by_digest(package.institution_id, digest) for digest in package.crosswalk_entry_digests)
         if any(entry.scope_digest != package.scope_digest for entry in entries):
             raise ValueError("assurance package contains cross-scope entries")
