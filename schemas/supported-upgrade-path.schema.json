@@ -7,7 +7,9 @@
   "required": [
     "path_id",
     "source_series",
+    "source_release_digest",
     "target_version",
+    "target_release_digest",
     "migration_plan_digest",
     "preflight_check_digest",
     "post_upgrade_check_digest",
@@ -21,7 +23,9 @@
   "properties": {
     "path_id": {"type": "string", "minLength": 1, "maxLength": 256},
     "source_series": {"const": "0.9.x"},
+    "source_release_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "target_version": {"const": "1.0.0"},
+    "target_release_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "migration_plan_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "preflight_check_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "post_upgrade_check_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
