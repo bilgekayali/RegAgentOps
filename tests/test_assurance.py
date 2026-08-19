@@ -15,7 +15,9 @@ from regagentops.assurance import (
 )
 from regagentops.models import Environment
 
+BEFORE = "2026-08-19T10:59:59Z"
 NOW = "2026-08-19T11:00:00Z"
+AFTER = "2026-08-19T11:00:01Z"
 
 
 class AssuranceEvidenceTests(unittest.TestCase):
@@ -41,6 +43,7 @@ class AssuranceEvidenceTests(unittest.TestCase):
         reference_id="GOVERN 1.1",
         applicability=Applicability.APPLICABLE,
         roles=(),
+        confirmed_at=NOW,
     ):
         return AssuranceApplicabilityAssertion(
             assertion_id=assertion_id,
@@ -53,10 +56,10 @@ class AssuranceEvidenceTests(unittest.TestCase):
             eu_ai_act_roles=roles,
             confirmation_basis="Confirmed by the accountable system owner against the pinned framework version.",
             confirmed_by_human_id="owner-1",
-            confirmed_at=NOW,
+            confirmed_at=confirmed_at,
         )
 
-    def evidence(self, evidence_id="evidence-1", *, digest="b" * 64, scope_digest=None):
+    def evidence(self, evidence_id="evidence-1", *, digest="b" * 64, scope_digest=None, recorded_at=NOW):
         return AssuranceEvidenceReference(
             evidence_id=evidence_id,
             institution_id="bank-demo",
@@ -65,7 +68,7 @@ class AssuranceEvidenceTests(unittest.TestCase):
             artifact_type="AuthenticatedAuthorizationDecision",
             artifact_schema_version="regagentops.authenticated-authorization-decision.v1",
             source_component="authenticated_policy",
-            recorded_at=NOW,
+            recorded_at=recorded_at,
         )
 
     def entry(
@@ -75,11 +78,12 @@ class AssuranceEvidenceTests(unittest.TestCase):
         entry_id="entry-1",
         coverage=EvidenceCoverage.SUPPORTED,
         evidence_digests=(),
+        mapped_at=NOW,
     ):
         return AssuranceCrosswalkEntry(
             entry_id=entry_id,
             institution_id="bank-demo",
-            scope_digest=self.scope.artifact_digest,
+            scope_digest=assertion.scope_digest,
             framework=assertion.framework,
             framework_version=assertion.framework_version,
             reference_id=assertion.reference_id,
@@ -88,7 +92,7 @@ class AssuranceEvidenceTests(unittest.TestCase):
             evidence_reference_digests=tuple(sorted(evidence_digests)),
             mapping_rationale="Exact RegAgentOps governance artifacts provide evidence relevant to this reference.",
             mapped_by_human_id="assurance-reviewer-1",
-            mapped_at=NOW,
+            mapped_at=mapped_at,
         )
 
     def test_framework_versions_are_explicitly_pinned(self):
@@ -130,6 +134,73 @@ class AssuranceEvidenceTests(unittest.TestCase):
     def test_non_eu_framework_rejects_eu_roles(self):
         with self.assertRaisesRegex(ValueError, "only valid for EU AI Act"):
             self.assertion(roles=(EUAIActRole.DEPLOYER,))
+
+    def test_scope_history_allows_new_context_for_same_deployment(self):
+        later_scope = replace(
+            self.scope,
+            context_digest="c" * 64,
+            recorded_at=AFTER,
+        )
+        first_digest = self.scope.artifact_digest
+        second_digest = self.registry.register_scope(later_scope)
+        self.assertNotEqual(first_digest, second_digest)
+        second_assertion = replace(
+            self.assertion(assertion_id="assertion-second-context", confirmed_at=AFTER),
+            scope_digest=second_digest,
+        )
+        self.registry.register_applicability(second_assertion)
+        self.assertNotEqual(self.registry.snapshot_digest("bank-demo"), "0" * 64)
+
+    def test_applicability_cannot_predate_scope(self):
+        assertion = self.assertion(confirmed_at=BEFORE)
+        with self.assertRaisesRegex(ValueError, "cannot predate assurance scope"):
+            self.registry.register_applicability(assertion)
+
+    def test_evidence_cannot_predate_scope(self):
+        evidence = self.evidence(recorded_at=BEFORE)
+        with self.assertRaisesRegex(ValueError, "cannot predate assurance scope"):
+            self.registry.register_evidence(evidence)
+
+    def test_mapping_cannot_predate_applicability_confirmation(self):
+        assertion = self.assertion(confirmed_at=NOW)
+        self.registry.register_applicability(assertion)
+        entry = self.entry(assertion, coverage=EvidenceCoverage.GAP, mapped_at=BEFORE)
+        with self.assertRaisesRegex(ValueError, "cannot predate applicability confirmation"):
+            self.registry.register_entry(entry)
+
+    def test_mapping_cannot_predate_mapped_evidence(self):
+        assertion = self.assertion()
+        evidence = self.evidence(recorded_at=AFTER)
+        self.registry.register_applicability(assertion)
+        self.registry.register_evidence(evidence)
+        entry = self.entry(
+            assertion,
+            evidence_digests=(evidence.artifact_digest,),
+            mapped_at=NOW,
+        )
+        with self.assertRaisesRegex(ValueError, "cannot predate mapped evidence"):
+            self.registry.register_entry(entry)
+
+    def test_package_cannot_predate_crosswalk_entry(self):
+        assertion = self.assertion()
+        evidence = self.evidence()
+        self.registry.register_applicability(assertion)
+        self.registry.register_evidence(evidence)
+        entry = self.entry(
+            assertion,
+            evidence_digests=(evidence.artifact_digest,),
+            mapped_at=AFTER,
+        )
+        self.registry.register_entry(entry)
+        with self.assertRaisesRegex(ValueError, "cannot predate its crosswalk entries"):
+            self.registry.build_package(
+                package_id="early-package",
+                institution_id="bank-demo",
+                scope_digest=self.scope.artifact_digest,
+                crosswalk_entry_digests=(entry.artifact_digest,),
+                assembled_by_human_id="assurance-reviewer-1",
+                assembled_at=NOW,
+            )
 
     def test_nist_crosswalk_binds_exact_human_assertion_and_evidence(self):
         assertion = self.assertion()
@@ -254,6 +325,25 @@ class AssuranceEvidenceTests(unittest.TestCase):
         )
         tampered = replace(package, evidence_reference_digests=("d" * 64,))
         with self.assertRaisesRegex(ValueError, "evidence reference set"):
+            self.registry.verify_package(tampered)
+
+    def test_package_verification_rejects_tampered_early_assembly_time(self):
+        assertion = self.assertion()
+        evidence = self.evidence()
+        self.registry.register_applicability(assertion)
+        self.registry.register_evidence(evidence)
+        entry = self.entry(assertion, evidence_digests=(evidence.artifact_digest,), mapped_at=NOW)
+        self.registry.register_entry(entry)
+        package = self.registry.build_package(
+            package_id="package-chronology",
+            institution_id="bank-demo",
+            scope_digest=self.scope.artifact_digest,
+            crosswalk_entry_digests=(entry.artifact_digest,),
+            assembled_by_human_id="assurance-reviewer-1",
+            assembled_at=NOW,
+        )
+        tampered = replace(package, assembled_at=BEFORE)
+        with self.assertRaisesRegex(ValueError, "predates its crosswalk entries"):
             self.registry.verify_package(tampered)
 
     def test_package_constructor_rejects_certification_conformity_or_legal_claims(self):
