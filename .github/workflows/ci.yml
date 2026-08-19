@@ -28,7 +28,7 @@ jobs:
         run: python -m compileall -q src
       - name: Run tests
         run: python -m unittest discover -s tests -v
-      - name: Enforce offline authorization identity approval MCP execution data assurance and hardening boundary
+      - name: Enforce offline authorization identity approval MCP execution data assurance hardening and deployment boundary
         shell: bash
         run: |
           python - <<'PY'
@@ -58,6 +58,7 @@ jobs:
               Path("src/regagentops/data_governance.py"),
               Path("src/regagentops/assurance.py"),
               Path("src/regagentops/hardening.py"),
+              Path("src/regagentops/deployment.py"),
           ]
           for path in core_files:
               source = path.read_text(encoding="utf-8")
@@ -98,6 +99,13 @@ jobs:
           ):
               if marker in hardening_source:
                   raise SystemExit(f"hardening core must remain adapter-only/offline: {marker}")
+          deployment_source = Path("src/regagentops/deployment.py").read_text(encoding="utf-8")
+          for marker in (
+              "kubernetes", "docker", "psycopg", "boto3", "requests.", "httpx.", "socket.",
+              "subprocess.", ".connect(", ".deploy(", ".invoke(", ".execute_tool("
+          ):
+              if marker in deployment_source:
+                  raise SystemExit(f"deployment reference core must remain non-deploying/offline: {marker}")
           PY
 
   package-smoke:
@@ -128,13 +136,14 @@ jobs:
           import regagentops.authenticated_identity_signature
           import regagentops.authenticated_policy
           import regagentops.data_governance
+          import regagentops.deployment
           import regagentops.execution
           import regagentops.hardening
           import regagentops.identity_binding
           import regagentops.mcp
           import regagentops.oidc
           import regagentops.workload_identity
-          assert regagentops.__version__ == version('regagentops') == '0.8.0'
+          assert regagentops.__version__ == version('regagentops') == '0.9.0'
           assert regagentops.mcp.MCP_MAX_TOOLS_PER_SNAPSHOT == 128
           assert regagentops.execution.EXECUTION_LEASE_MAX_SECONDS == 120
           assert regagentops.execution.EXECUTION_AUTHORIZATION_MAX_AGE_SECONDS == 120
@@ -145,6 +154,8 @@ jobs:
           assert regagentops.hardening.CryptoKeyCustody.KMS.value == 'kms'
           assert regagentops.hardening.CryptoKeyCustody.HSM.value == 'hsm'
           assert regagentops.hardening.CryptoAlgorithm.AES_256_GCM.value == 'AES-256-GCM'
+          assert regagentops.deployment.EgressProtocol.HTTPS.value == 'https'
+          assert regagentops.deployment.EgressProtocol.TLS.value == 'tls'
           PY
           /tmp/regagentops-smoke/bin/regagentops demo-decision > /tmp/regagentops-decision.json
           /tmp/regagentops-smoke/bin/python - <<'PY'
