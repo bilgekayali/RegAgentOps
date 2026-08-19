@@ -106,11 +106,12 @@ jobs:
               'governance_evidence_digests',
               'McpPolicyEnforcementPoint',
               'ExecutionGate',
+              'single-pass adapter',
           )
           for marker in required_markers:
               if marker not in source:
                   raise SystemExit(f'missing v0.6 fail-closed invariant: {marker}')
-          for marker in ('requests.', 'httpx.', 'subprocess.', '.invoke(', '.execute_tool('):
+          for marker in ('requests.', 'httpx.', 'subprocess.', '.invoke(', '.execute_tool(', 'self._base._mcp', 'self._base._agents'):
               if marker in source:
-                  raise SystemExit(f'data governance core must remain metadata-only/offline: {marker}')
+                  raise SystemExit(f'data governance core violates capability/composition boundary: {marker}')
           PY
