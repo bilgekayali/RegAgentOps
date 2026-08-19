@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://regagentops.example/schemas/egress-policy.schema.json",
+  "title": "EgressPolicy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["institution_id", "tenant_id", "policy_version", "allowed_destinations", "default_deny", "allow_wildcards", "allow_plaintext", "registered_at", "schema_version"],
+  "properties": {
+    "institution_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "tenant_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "policy_version": {"type": "integer", "minimum": 1},
+    "allowed_destinations": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["destination_id", "protocol", "host", "port", "purpose", "trust_policy_digest"],
+        "properties": {
+          "destination_id": {"type": "string", "minLength": 1, "maxLength": 256},
+          "protocol": {"enum": ["https", "tls"]},
+          "host": {"type": "string", "minLength": 1, "maxLength": 253, "not": {"pattern": "\\*|/|://"}},
+          "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+          "purpose": {"type": "string", "minLength": 1, "maxLength": 512},
+          "trust_policy_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      }
+    },
+    "default_deny": {"const": true},
+    "allow_wildcards": {"const": false},
+    "allow_plaintext": {"const": false},
+    "registered_at": {"type": "string", "format": "date-time"},
+    "schema_version": {"const": "regagentops.egress-policy.v1"}
+  }
+}
