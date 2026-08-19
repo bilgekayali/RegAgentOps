@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://regagentops.dev/schemas/crypto-key-lifecycle-state.schema.json",
+  "title": "CryptoKeyLifecycleState",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["institution_id", "tenant_id", "purpose", "key_reference_digest", "state_version", "status", "effective_at", "schema_version"],
+  "properties": {
+    "institution_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "tenant_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "purpose": {"enum": ["config_signing", "evidence_encryption"]},
+    "key_reference_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "state_version": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["active", "retired", "disabled"]},
+    "effective_at": {"type": "string", "minLength": 2, "maxLength": 64, "pattern": "Z$"},
+    "schema_version": {"const": "regagentops.crypto-key-lifecycle-state.v1"}
+  }
+}
