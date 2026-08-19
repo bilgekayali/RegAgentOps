@@ -6,7 +6,8 @@
   "additionalProperties": false,
   "required": [
     "schema_version", "request_digest", "policy_bundle_digest", "decision", "matched_rule_ids",
-    "constraints", "reason_codes", "human_approval_required", "policy_permits_execution", "evaluated_at"
+    "constraints", "reason_codes", "human_approval_required", "policy_permits_execution", "evaluated_at",
+    "governance_evidence_digests"
   ],
   "properties": {
     "schema_version": {"const": "regagentops.authorization-decision.v1"},
@@ -18,7 +19,8 @@
     "reason_codes": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
     "human_approval_required": {"type": "boolean"},
     "policy_permits_execution": {"type": "boolean"},
-    "evaluated_at": {"type": "string", "format": "date-time", "pattern": "Z$"}
+    "evaluated_at": {"type": "string", "format": "date-time", "pattern": "Z$"},
+    "governance_evidence_digests": {"type":"array","uniqueItems":true,"items":{"type":"string","pattern":"^[0-9a-f]{64}$"}}
   },
   "allOf": [
     {

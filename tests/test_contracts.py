@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ContractTests(unittest.TestCase):
     def test_package_version(self):
-        self.assertEqual(regagentops.__version__, "0.5.0")
+        self.assertEqual(regagentops.__version__, "0.6.0")
 
     def test_json_schemas_are_parseable_and_version_pinned(self):
         expected = {
@@ -45,12 +45,21 @@ class ContractTests(unittest.TestCase):
             "execution-trust-bundle.schema.json": "regagentops.execution-trust-bundle.v1",
             "tool-execution-receipt.schema.json": "regagentops.tool-execution-receipt.v1",
             "signed-tool-execution-receipt.schema.json": "regagentops.signed-tool-execution-receipt.v1",
+            "data-resource-profile.schema.json": "regagentops.data-resource-profile.v1",
+            "data-use-declaration.schema.json": "regagentops.data-use-declaration.v1",
+            "data-governance-decision.schema.json": "regagentops.data-governance-decision.v1",
         }
         for filename, discriminator in expected.items():
             payload = json.loads((ROOT / "schemas" / filename).read_text(encoding="utf-8"))
             self.assertEqual(payload["$schema"], "https://json-schema.org/draft/2020-12/schema")
             self.assertEqual(payload["properties"]["schema_version"]["const"], discriminator)
             self.assertFalse(payload["additionalProperties"])
+
+    def test_authorization_contract_binds_governance_evidence(self):
+        authorization = json.loads((ROOT / "schemas" / "authorization-decision.schema.json").read_text())
+        self.assertIn("governance_evidence_digests", authorization["required"])
+        authenticated = json.loads((ROOT / "schemas" / "authenticated-authorization-decision.schema.json").read_text())
+        self.assertIn("governance_evidence_digests", authenticated["properties"]["authorization"]["required"])
 
     def test_demo_cli_is_offline_and_non_executing(self):
         completed = subprocess.run(

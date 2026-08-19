@@ -152,6 +152,7 @@ class AuthorizationDecision:
     human_approval_required: bool
     policy_permits_execution: bool
     evaluated_at: str
+    governance_evidence_digests: tuple[str, ...] = ()
     schema_version: str = "regagentops.authorization-decision.v1"
 
     def __post_init__(self) -> None:
@@ -164,6 +165,13 @@ class AuthorizationDecision:
             raise ValueError("matched_rule_ids must be unique")
         if len(set(self.constraints)) != len(self.constraints):
             raise ValueError("constraints must be unique")
+        if len(set(self.governance_evidence_digests)) != len(self.governance_evidence_digests):
+            raise ValueError("governance_evidence_digests must be unique")
+        if tuple(sorted(self.governance_evidence_digests)) != self.governance_evidence_digests:
+            raise ValueError("governance_evidence_digests must be sorted")
+        for digest in self.governance_evidence_digests:
+            if not _HEX_64.fullmatch(digest):
+                raise ValueError("governance_evidence_digests must contain lowercase SHA-256 digests")
         if self.decision is Decision.DENY and (self.human_approval_required or self.policy_permits_execution):
             raise ValueError("DENY cannot require approval or permit execution")
         if self.decision is Decision.REQUIRE_HUMAN_APPROVAL and (

@@ -1,173 +1,156 @@
-# Threat Model — v0.5
+# Threat Model — v0.6
 
 ## Protected assets
 
-- authorization policy integrity;
+- authorization policy integrity and governance-evidence binding;
 - institution, human-owner, agent, model and workload identity bindings;
-- OIDC verifier configuration and pinned JWKS integrity;
-- institution identity/context trust material;
-- approval authority/delegation integrity;
-- approver signing-key trust and approval-signature integrity;
-- approval requirement and replay-ledger integrity;
-- MCP server approval and identity-pin integrity;
-- MCP tool snapshot and explicit tool-binding integrity;
-- execution-lease integrity and one-time consumption state;
+- data-resource classification/category integrity;
+- primary-purpose and compatible-secondary-purpose configuration;
+- sensitive-data minimization and output-handling requirements;
+- retention ceilings and request-bound retention intent;
+- data-governance registry/profile currentness;
+- approval authority, signature and replay integrity;
+- MCP server approval, identity-pin, snapshot and binding integrity;
+- execution-lease integrity, executor binding and one-time consumption state;
 - emergency-stop state integrity;
 - executor signing-key trust and signed execution-receipt integrity;
-- result-digest and policy-decision linkage;
-- separation between untrusted MCP metadata and policy authority;
-- separation between RegAgentOps governance/evidence and external execution capability.
+- result-digest, policy-decision and authenticated-authorization linkage;
+- separation between governance evidence and external execution capability.
 
 ## Trust boundaries
 
-1. **Caller → MCP governance registry**: supplied MCP server/tool metadata is untrusted until exact governed server, identity-pin and currentness checks pass.
-2. **Institution MCP configuration → registry**: server approval, server identity pins, tool bindings, classification scope and production-registration flags are privileged administrative input.
-3. **MCP registry → authenticated PDP**: only exact current explicit bindings become `ToolActionDescriptor` entries; tool annotations do not become policy authority.
-4. **Caller → identity/PDP**: action, identity and request inputs are untrusted until verified.
-5. **Human identity registry / pinned JWKS → OIDC verifier**: privileged trust configuration; no online discovery.
-6. **Institution workload/context signer → verifier**: private keys remain outside the verifier.
-7. **Registry/policy configuration → PDP**: privileged administrative input.
-8. **Trusted local PDP → approval gate**: exact authenticated authorization is digest-bound and cannot be overridden by approval.
-9. **Approval authority bundle → approval gate**: privileged role/delegation configuration.
-10. **Human approval signer → approval verifier**: private approval keys remain outside RegAgentOps; signed statements and public trust material cross the boundary.
-11. **MCP/approval evidence → execution gate**: exact request, authorization, policy-decision, MCP result and approval artifacts are revalidated before lease issuance.
-12. **Emergency-stop configuration → execution gate**: institution-owned append-only stop state is privileged execution-governance input.
-13. **Execution lease ledger → external executor**: atomic one-time consumption is the final RegAgentOps pre-dispatch boundary.
-14. **External executor → receipt builder**: executor-reported result digest/outcome is represented evidence, not independently observed truth.
-15. **Executor signer → receipt verifier**: private executor keys remain outside RegAgentOps; signed receipt and public trust material cross the boundary.
+1. **Caller → identity/policy plane**: action, identity and request inputs are untrusted until verified.
+2. **Institution data configuration → data-governance registry**: classification, categories, purposes, output modes, redaction requirements and retention ceilings are privileged governance input.
+3. **Caller → `DataUseDeclaration`**: declared categories, purpose, output handling and retention are untrusted until exact request/profile validation succeeds.
+4. **Data-governance registry → authenticated authorization**: only exact current profile/decision evidence may constrain or deny the existing policy result.
+5. **Institution MCP configuration → MCP registry**: server approvals, identity pins and tool bindings remain privileged administrative input.
+6. **MCP registry → authenticated PDP**: only current explicit bindings become governed tool actions; MCP annotations remain evidence only.
+7. **Authenticated authorization → approval gate**: human approval binds exact authorization and cannot override identity, policy or data-governance denial.
+8. **MCP/data/approval evidence → execution gate**: currentness is revalidated before lease issuance/redemption.
+9. **Emergency-stop configuration → execution gate**: append-only institution stop state is privileged runtime-governance input.
+10. **Execution lease ledger → external executor**: atomic one-time consumption is the final RegAgentOps pre-dispatch boundary.
+11. **External executor → receipt builder**: executor-reported result digest/outcome is represented evidence, not independently observed truth.
+12. **Executor signer → receipt verifier**: private executor keys remain outside RegAgentOps.
 
 ## Primary threats and controls
 
+### Sensitive-category under-reporting
+
+Threat: a caller omits `personal`, `financial`, `health`, credential or other sensitive categories to obtain weaker output or retention controls.
+
+Control: `DataUseDeclaration.observed_data_categories` must exactly equal the current `DataResourceProfile.data_categories`. Subset matching is deliberately rejected. A mismatch produces `data_category_profile_mismatch` and terminates authorization.
+
+Residual boundary: RegAgentOps does not scan live payload bytes. Correct resource categorization remains an institution/integration responsibility.
+
+### Purpose laundering
+
+Threat: an action authorized for one business purpose is reused against a resource for an unrelated purpose.
+
+Controls: the request purpose is already bound into `AgentActionEnvelope` and policy matching. v0.6 independently requires the same purpose to be a resource primary purpose or an explicitly configured compatible secondary purpose. Secondary use is emitted as an explicit constraint. No prompt, tool description, model output or MCP annotation can create purpose compatibility.
+
+Residual boundary: v0.6 does not determine legal basis or semantic purpose truthfulness; it enforces configured identifiers.
+
+### Output-handling downgrade
+
+Threat: raw sensitive output is requested even though the governed resource requires redaction or aggregation.
+
+Controls: profiles explicitly declare categories requiring redaction and permitted output modes. Raw requests over such categories are deterministically constrained to a permitted safer mode—redacted, then aggregated, then metadata-only—or denied if no safe permitted mode exists. The chosen requirement is bound into authorization constraints.
+
+Residual boundary: the core does not redact bytes. The surrounding executor must enforce the represented constraint.
+
+### Retention expansion
+
+Threat: a request asks to persist governed data beyond the institution-approved period.
+
+Controls: each `DataUseDeclaration` contains explicit `retention_seconds`. Values above the current profile ceiling fail closed. Positive decisions bind either `retention:no-persist` or an exact retention-seconds constraint.
+
+Residual boundary: v0.6 does not schedule deletion or independently prove downstream deletion occurred.
+
+### Data-governance profile substitution
+
+Threat: a decision produced under one resource profile is presented as if it were evaluated under another or newer profile.
+
+Controls: `DataGovernanceDecision` binds exact request, declaration, profile and whole institution registry-snapshot digests. Its artifact digest is included in `AuthorizationDecision.governance_evidence_digests`. `DataGovernedExecutionGate` checks snapshot and exact profile currentness before lease issuance and redemption.
+
+### Stale authorization after data-governance change
+
+Threat: purpose compatibility, classification, redaction or retention configuration changes after authorization but before execution.
+
+Control: any data-governance registry snapshot change invalidates the v0.6 decision for execution. Fresh data-purpose authorization is required before a new lease can proceed.
+
+### Data-governance bypass through legacy MCP path
+
+Threat: a caller invokes the v0.4 MCP adapter directly and represents that result as v0.6-governed authorization.
+
+Controls: v0.6 exposes a distinct `DataPurposeMcpPolicyEnforcementOutcome` and `DataGovernedExecutionGate`. Positive v0.6 execution requires a bound `DataGovernanceDecision`; missing data-use context becomes `DENY`. `AuthorizationDecision.governance_evidence_digests` provides an explicit evidence hook for downstream inspection.
+
+Residual boundary: v0.6 is a reference architecture, not a deployment policy. Production integration must route governed resources through the v0.6 boundary rather than exposing an ungoverned legacy entry point.
+
+### Data-governance decision tampering
+
+Threat: constraints, purpose, categories or profile linkage are modified after evaluation.
+
+Control: canonical SHA-256 artifact digests bind the complete `DataGovernanceDecision`; that digest is part of authenticated authorization evidence. Any modified decision has a different digest and no longer matches the authorization chain.
+
 ### Authorization-to-execution substitution
 
-Threat: an authorization for one request, tool, policy result or input is reused to execute another action.
+Controls from v0.5 remain: the execution lease binds exact request, authenticated authorization, nested policy decision, MCP result, MCP snapshot, intended executor, emergency-stop state and approval evidence when required. Authorization freshness and lease lifetime are bounded to 120 seconds.
 
-Controls: `ExecutionLease` binds the exact request digest, authenticated-authorization digest, nested policy-decision digest, MCP policy-enforcement-result digest and MCP registry-snapshot digest. Receipt construction requires the exact authorized `AgentActionEnvelope`, lease and one-time consumption artifact. Tool/action/resource/input evidence is copied from that exact request, not supplied independently as execution authority.
+### Forged lease consumption or replay
 
-### Approval substitution
+Controls from v0.5 remain: lease redemption is atomic and append-only; receipt construction requires the exact consumption artifact to exist in the ledger; executor identity is bound through lease, consumption and receipt.
 
-Threat: a valid approval resolution for another request or authorization is attached to an approval-required execution.
+### MCP governance drift and server/tool substitution
 
-Controls: v0.5 requires both the exact `ApprovalRequirement` and `ApprovalResolution`. The requirement must bind the same request and authenticated authorization plus requester/tool/action/environment/risk scope. The resolution must bind that exact requirement and permit continuation. Non-approval paths reject attached approval artifacts.
+Controls from v0.4/v0.5 remain: institution-owned server IDs and identity pins, bounded snapshots, exact current descriptor bindings, conflicting-latest failure and revalidation before execution.
 
-### Execution-lease replay
+### Human approval override
 
-Threat: the same authorization is used to execute a tool more than once.
+Controls from v0.3 remain: approval cannot create continuation from identity, base-policy or v0.6 data-governance `DENY`. Requester separation, bounded delegated authority, signatures and one-time approval redemption remain active.
 
-Controls: leases are capped at 120 seconds and consumed atomically in an append-only SQLite ledger keyed by `lease_digest`. `BEGIN IMMEDIATE` plus a primary-key insert makes a successful second redemption fail closed. The resulting `ExecutionLeaseConsumption` is itself digest-bound into the receipt.
+### Identity substitution and JWT key confusion
 
-Residual boundary: the reference ledger is local SQLite state, not distributed consensus. A production deployment with multiple executors must provide a serialization boundary with equivalent or stronger one-time semantics.
+Controls from v0.2 remain: registered owner/provider/subject binding, pinned issuer/client/audience/algorithm policy, nonce/time checks, remote key-selection header rejection, signed workload identity and signed authenticated context.
 
-### Lease use after MCP governance drift
+### Result substitution and executor-key substitution
 
-Threat: MCP server approval, tool metadata or explicit binding changes after policy evaluation but an old authorization is still used.
-
-Controls: lease issuance recomputes the MCP registry snapshot and resolves the exact current server registration, tool snapshot and descriptor represented by the policy result. Redemption repeats this check. Any MCP registry-snapshot change invalidates an unconsumed lease.
-
-### Emergency-stop bypass
-
-Threat: an action proceeds while the institution has activated an emergency stop, or an old non-halted state is reused after stop-state change.
-
-Controls: emergency-stop state is explicit, institution-scoped, append-only and contiguously versioned. A halted current state blocks lease issuance and redemption. Every lease binds the exact current non-halted stop-state digest; any later state version invalidates the old unconsumed lease.
-
-Residual boundary: RegAgentOps checks stop state at lease redemption, immediately before the intended external dispatch boundary. It cannot independently prove that an external executor rechecked or honored state changes occurring after redemption.
-
-### Result substitution or receipt tampering
-
-Threat: a signed receipt is presented with a different result digest, policy decision, lease, request or authorization.
-
-Controls: `ToolExecutionReceipt` binds those digests explicitly. The Ed25519 signing document is domain separated with `regagentops.tool-execution-receipt.v1` and includes receipt, request, lease, lease-consumption, MCP-result, authenticated-authorization, policy-decision and result digests. Any modification changes the signing document and fails verification.
-
-### Executor key substitution
-
-Threat: an untrusted principal signs an execution receipt under another executor identity or key id.
-
-Controls: `ExecutionTrustBundle` binds institution, executor id and key id to an Ed25519 public key, status and validity window. Signing rejects signer institution/executor mismatch; verification requires a unique active matching key and valid signature.
-
-### Failed execution replay
-
-Threat: a failed tool attempt is retried under the same authorization/lease until it succeeds.
-
-Control: the lease is consumed before external execution begins. Both `SUCCEEDED` and `FAILED` receipts therefore refer to an already-consumed lease; retries require a new lease and fresh current-state checks.
-
-### Forged execution chronology
-
-Threat: a receipt claims execution started before one-time lease redemption or after lease expiry.
-
-Controls: receipt construction requires `started_at >= consumed_at` and `started_at < lease.expires_at`; completion cannot predate start. The signed receipt binds these timestamps through the receipt digest.
-
-### MCP server substitution
-
-Threat: metadata from a different server is presented under an approved server name.
-
-Controls from v0.4 remain: current snapshots bind an institution-owned `server_id`, exact current server-registration digest, expected server-reported name and out-of-band `server_identity_digest`; mismatched identity pins and stale registrations fail closed.
-
-Residual boundary: RegAgentOps still does not perform a live cryptographic MCP transport handshake. Correctness of caller-supplied observed server evidence remains an integration responsibility.
-
-### Untrusted annotation privilege escalation
-
-Controls from v0.4 remain: descriptions and annotations are evidence digests only. Explicit `McpToolBinding` defines data-classification scope, production registration and enabled state; metadata annotations cannot change policy effect, risk tier or approval requirements.
-
-### Conflicting or stale MCP state
-
-Controls from v0.4 remain: bounded snapshots, duplicate rejection, conflicting-semantic-latest failure, latest approved server enforcement and explicit re-binding after metadata drift.
-
-### MCP adapter bypassing identity/policy controls
-
-Control from v0.4 remains: `McpPolicyEnforcementPoint` delegates to `AuthenticatedPolicyEngine` and does not introduce a weaker policy language. `execution_performed` remains false in the MCP result.
-
-### Human approval overriding a policy denial
-
-Control from v0.3 remains: approval cannot create a requirement from base `DENY`, and v0.5 refuses to issue an execution lease from any `DENY` or unverified outcome.
-
-### Requester self-approval, delegation expansion and approval replay
-
-Controls from v0.3 remain: requester/approver separation, bounded non-expanding delegation, Ed25519 approval signatures and one-time approval-requirement redemption.
-
-### Identity substitution, JWT key confusion and stale authentication
-
-Controls from v0.2 remain: registered owner→provider→subject binding, pinned issuer/client/audience/algorithm policy, nonce/time checks, rejection of remote key-selection headers, short-lived signed workload identity and institution-signed authenticated context.
+Controls from v0.5 remain: signed execution receipts bind result, request, authorization, lease and consumption digests with domain-separated Ed25519 signatures and institution/executor/key trust binding.
 
 ### Capability creep
 
-Threat: execution-receipt code quietly becomes a production tool executor or gains network/process capability.
+Threat: v0.6 quietly gains data-discovery, DLP, network, process or execution capability.
 
-Controls: generic CI includes `execution.py` in the offline capability surface. The dedicated Signed Execution Receipt Boundary rejects network/process imports and invocation markers, pins the 120-second lease constant, requires domain-separated Ed25519 receipt signing, and checks that the lease ledger remains append-only and lease-keyed.
+Controls: generic CI and the dedicated Data and Purpose Governance Boundary reject network/process imports and invocation markers in `data_governance.py`. The module consumes explicit caller/institution artifacts only. It has no scanner, client, discovery session or tool-execution interface.
 
 ## Residual risks
 
-RegAgentOps records exact bindings but still relies on caller/integration correctness for observed live MCP identity and tool metadata.
+Resource categories, purpose relationships, redaction requirements and retention ceilings are institution-owned assertions. RegAgentOps does not independently determine whether those assertions are legally or factually correct.
 
-The MCP registry and emergency-stop registry are reference in-memory state. Institution configuration is not yet protected by signed change control, tenant-isolated durable storage, KMS/HSM keys or external immutable anchoring.
+Data-use declarations are exact signed/digest-bound governance inputs but are not generated by a trusted DLP scanner in this milestone. A surrounding integration that supplies incorrect observed categories can undermine policy unless institutional resource profiles remain accurate and authoritative.
 
-The approval and execution SQLite ledgers are application-level local serialization boundaries, not distributed consensus or physical WORM storage.
+The data-governance, MCP and emergency-stop registries are reference in-memory state. Configuration is not yet protected by signed change control, tenant-isolated durable storage, KMS/HSM keys or external immutable anchoring.
 
-A signed execution receipt proves signature validity and integrity of the represented artifact. It does not independently prove that the external executor actually invoked the represented tool, that the represented result bytes are truthful/complete, or that an external system did not perform additional unrecorded actions.
+SQLite approval/execution ledgers remain local serialization boundaries rather than distributed consensus or physical WORM storage.
 
-Executor private-key custody, secure key generation, hardware protection, rotation and compromise response are deployment responsibilities until later cryptographic-hardening milestones.
+The core records output/retention constraints but does not transform output bytes, schedule deletion, prove downstream retention enforcement or inspect post-execution data flows.
 
-A stop-state change after lease redemption but before/during external dispatch cannot be independently observed or enforced by the offline RegAgentOps core. Production reference deployment must minimize this gap and enforce equivalent state checks in the isolated executor boundary.
+A signed receipt proves integrity of represented evidence, not that an external executor actually performed the action exactly as represented or complied with every output/retention constraint.
 
 ## Explicit non-claims
 
-v0.5 does not provide or claim:
+v0.6 does not provide or claim:
 
-- OpenID Provider or OAuth authorization-server functionality;
-- SPIFFE/SPIRE or SVID protocol conformance;
-- online OIDC discovery or remote JWKS retrieval;
-- autonomous MCP server/tool discovery;
-- live MCP transport authentication or connectivity;
-- MCP protocol/server/client conformance certification;
-- truthfulness of MCP tool descriptions or annotations;
-- tool implementation safety or correctness;
-- generic BPM/workflow approval functionality;
-- production credential brokerage;
-- production tool invocation by the RegAgentOps core;
-- independent proof that an external executor actually performed the represented action;
-- independent proof that represented result bytes are truthful or complete;
+- automatic PII/sensitive-data discovery or DLP scanning;
+- legal data classification or legal-basis determination;
+- consent-management functionality;
+- semantic purpose inference or legal purpose-compatibility determination;
+- byte-level redaction, tokenization or anonymization;
+- retention scheduling, deletion enforcement or proof of deletion;
+- autonomous MCP server/tool discovery or live MCP connectivity;
+- production credential brokerage or tool invocation by the RegAgentOps core;
 - distributed exactly-once execution guarantees across multiple executor nodes;
-- runtime sandboxing;
-- external immutable audit storage;
+- independent proof that represented result bytes are truthful or complete;
+- runtime sandboxing or external immutable audit storage;
 - independent timestamp authority;
 - regulatory or standards certification;
 - production fitness.

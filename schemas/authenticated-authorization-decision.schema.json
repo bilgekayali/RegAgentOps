@@ -11,7 +11,7 @@
     "authorization": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["request_digest", "policy_bundle_digest", "decision", "matched_rule_ids", "constraints", "reason_codes", "human_approval_required", "policy_permits_execution", "evaluated_at", "schema_version"],
+      "required": ["request_digest", "policy_bundle_digest", "decision", "matched_rule_ids", "constraints", "reason_codes", "human_approval_required", "policy_permits_execution", "evaluated_at", "governance_evidence_digests", "schema_version"],
       "properties": {
         "request_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "policy_bundle_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
@@ -22,6 +22,7 @@
         "human_approval_required": {"type": "boolean"},
         "policy_permits_execution": {"type": "boolean"},
         "evaluated_at": {"type": "string", "format": "date-time"},
+        "governance_evidence_digests": {"type":"array","uniqueItems":true,"items":{"type":"string","pattern":"^[0-9a-f]{64}$"}},
         "schema_version": {"const": "regagentops.authorization-decision.v1"}
       }
     },
