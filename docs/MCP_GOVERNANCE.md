@@ -103,10 +103,12 @@ ToolRegistry (derived only from current explicit bindings)
                     v
        AuthenticatedAuthorizationDecision
                     |
-                    v
+                    +------ request risk tier
+                    |              |
+                    v              v
         McpPolicyEnforcementResult
                     |
-          if approval required
+          if approval gate required
                     v
                ApprovalGate (v0.3)
 ```
@@ -117,13 +119,20 @@ The MCP adapter does not create a parallel policy language. Existing RegAgentOps
 
 Unknown, stale, changed, cross-scope, unapproved or unbound MCP state fails closed before policy continuation.
 
-## Execution semantics
+## Approval and execution semantics
+
+`McpPolicyEnforcementResult` binds the exact request risk tier. Its `human_approval_required` field represents the overall v0.3 approval gate, not merely the base policy decision.
+
+Approval is therefore pending when either:
+
+- authenticated policy returns `REQUIRE_HUMAN_APPROVAL`; or
+- the request risk tier is `high` or `critical`.
+
+A high/critical request cannot report `execution_permitted=true` merely because the base policy decision is `ALLOW` or `ALLOW_WITH_CONSTRAINTS`. The adapter retains the exact `AuthenticatedAuthorizationDecision` and request artifact so the existing v0.3 `ApprovalGate` can issue the digest-bound requirement.
 
 `McpPolicyEnforcementResult.execution_performed` is always `false` in v0.4.
 
-`execution_permitted=true` means only that the represented authenticated policy decision permits continuation without a pending human-approval gate. It is not proof that an external MCP client/server will enforce the decision, and it is not an execution receipt.
-
-When policy returns `REQUIRE_HUMAN_APPROVAL`, the adapter preserves the exact `AuthenticatedAuthorizationDecision` so the existing v0.3 `ApprovalGate` can issue and resolve the bound approval requirement.
+`execution_permitted=true` means only that the represented authenticated policy decision permits continuation **and** no v0.3 human-approval gate is pending for the represented risk tier. It is not proof that an external MCP client/server will enforce the decision, and it is not an execution receipt.
 
 ## Historical evidence and currentness
 
