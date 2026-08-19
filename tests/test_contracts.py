@@ -56,6 +56,7 @@ class ContractTests(unittest.TestCase):
             "postgres-rls-policy.schema.json": "regagentops.postgres-rls-policy.v1",
             "tenant-isolation-profile.schema.json": "regagentops.tenant-isolation-profile.v1",
             "institution-crypto-key-reference.schema.json": "regagentops.institution-crypto-key-reference.v1",
+            "crypto-key-lifecycle-state.schema.json": "regagentops.crypto-key-lifecycle-state.v1",
             "configuration-change-request.schema.json": "regagentops.configuration-change-request.v1",
             "signed-configuration-change.schema.json": "regagentops.signed-configuration-change.v1",
             "encrypted-governance-evidence.schema.json": "regagentops.encrypted-governance-evidence.v1",
@@ -83,13 +84,15 @@ class ContractTests(unittest.TestCase):
         self.assertFalse(properties["legal_compliance_determined"]["const"])
         self.assertTrue(properties["requires_human_review"]["const"])
 
-    def test_hardening_contracts_pin_rls_kms_hsm_and_no_symmetric_key_material(self):
+    def test_hardening_contracts_pin_rls_kms_hsm_lifecycle_and_no_symmetric_key_material(self):
         rls = json.loads((ROOT / "schemas" / "postgres-rls-policy.schema.json").read_text())
         self.assertTrue(rls["properties"]["force_row_level_security"]["const"])
         key = json.loads((ROOT / "schemas" / "institution-crypto-key-reference.schema.json").read_text())
         self.assertEqual(key["properties"]["custody"]["enum"], ["kms", "hsm"])
         self.assertNotIn("private_key", key["properties"])
         self.assertNotIn("symmetric_key", key["properties"])
+        lifecycle = json.loads((ROOT / "schemas" / "crypto-key-lifecycle-state.schema.json").read_text())
+        self.assertEqual(lifecycle["properties"]["status"]["enum"], ["active", "retired", "disabled"])
         encrypted = json.loads((ROOT / "schemas" / "encrypted-governance-evidence.schema.json").read_text())
         self.assertEqual(encrypted["properties"]["algorithm"]["const"], "AES-256-GCM")
 
