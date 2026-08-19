@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RegAgentOps Signed Tool Execution Receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["receipt","key_id","algorithm","signature_base64url","signing_document_digest","schema_version"],
+  "properties": {
+    "receipt": {"$ref":"tool-execution-receipt.schema.json"},
+    "key_id": {"type":"string","minLength":1,"maxLength":256},
+    "algorithm": {"const":"Ed25519"},
+    "signature_base64url": {"type":"string","minLength":86,"maxLength":86,"pattern":"^[A-Za-z0-9_-]+$"},
+    "signing_document_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "schema_version": {"const":"regagentops.signed-tool-execution-receipt.v1"}
+  }
+}
