@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://regagentops.example/schemas/recovery-checkpoint.schema.json",
+  "title": "RecoveryCheckpoint",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["institution_id", "tenant_id", "checkpoint_id", "release_digest", "configuration_digest", "encrypted_backup_digest", "audit_anchor_record_digest", "restore_verification_digest", "created_at", "schema_version"],
+  "properties": {
+    "institution_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "tenant_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "checkpoint_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "release_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "configuration_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "encrypted_backup_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "audit_anchor_record_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "restore_verification_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "schema_version": {"const": "regagentops.recovery-checkpoint.v1"}
+  }
+}

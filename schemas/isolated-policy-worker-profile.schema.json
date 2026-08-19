@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://regagentops.example/schemas/isolated-policy-worker-profile.schema.json",
+  "title": "IsolatedPolicyWorkerProfile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["institution_id", "tenant_id", "worker_profile_version", "worker_image_digest", "service_account_id", "egress_policy_digest", "tool_allowlist_policy_digest", "tenant_isolation_profile_digest", "network_namespace_isolated", "run_as_non_root", "read_only_root_filesystem", "no_new_privileges", "drop_all_linux_capabilities", "seccomp_profile", "privileged", "host_network", "host_pid", "host_ipc", "direct_tool_invocation", "registered_at", "schema_version"],
+  "properties": {
+    "institution_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "tenant_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "worker_profile_version": {"type": "integer", "minimum": 1},
+    "worker_image_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "service_account_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "egress_policy_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "tool_allowlist_policy_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "tenant_isolation_profile_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "network_namespace_isolated": {"const": true},
+    "run_as_non_root": {"const": true},
+    "read_only_root_filesystem": {"const": true},
+    "no_new_privileges": {"const": true},
+    "drop_all_linux_capabilities": {"const": true},
+    "seccomp_profile": {"const": "RuntimeDefault"},
+    "privileged": {"const": false},
+    "host_network": {"const": false},
+    "host_pid": {"const": false},
+    "host_ipc": {"const": false},
+    "direct_tool_invocation": {"const": false},
+    "registered_at": {"type": "string", "format": "date-time"},
+    "schema_version": {"const": "regagentops.isolated-policy-worker-profile.v1"}
+  }
+}

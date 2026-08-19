@@ -1,167 +1,184 @@
-# Threat Model — v0.8
+# Threat Model — v0.9
 
 ## Protected assets
 
 - authorization policy integrity and governance-evidence binding;
-- institution, human-owner, agent, model and workload identity bindings;
-- data-resource classification/category, purpose, output and retention governance;
-- approval authority, signature and replay integrity;
-- MCP server approval, identity-pin, snapshot and binding integrity;
-- execution-lease integrity, executor binding and one-time consumption state;
-- emergency-stop state and signed execution-receipt integrity;
-- assurance-scope/applicability/crosswalk/package integrity;
-- tenant identity and PostgreSQL RLS policy/profile integrity;
-- institution-owned KMS/HSM key-reference integrity and tenant/purpose separation;
-- signed configuration-change chain integrity;
-- encrypted-governance-evidence tenant/key/AAD integrity;
-- external audit-anchor batch/receipt/chain integrity; and
-- separation between hardening evidence and execution authority.
+- authenticated human/agent/model/workload identity;
+- approval authority, replay protection and execution-lease integrity;
+- MCP, data-purpose and emergency-stop currentness;
+- signed execution-receipt integrity;
+- assurance-scope/crosswalk/package integrity;
+- tenant identity, PostgreSQL RLS profile and KMS/HSM key-reference integrity;
+- signed configuration-change and encrypted-evidence integrity;
+- external audit-anchor chain integrity;
+- production egress and tool-dispatch allowlists;
+- exact current v0.8 tenant-isolation binding in the production worker;
+- isolated policy-worker profile integrity;
+- release source/artifact/configuration and security/provenance evidence bindings;
+- rollback/upgrade transition integrity;
+- recovery-checkpoint evidence; and
+- separation between production-reference metadata and privileged deployment/execution capability.
 
 ## Trust boundaries
 
-1. **Caller → identity/policy plane**: action, identity and request inputs are untrusted until verified.
-2. **Institution data/MCP configuration → governance registries**: classification, purpose, tool/server and related configuration are privileged input.
-3. **Authenticated authorization → approval/execution**: exact current policy/governance artifacts remain execution authority.
-4. **Institution database configuration → RLS artifacts**: policy/profile artifacts are trusted administrative references; actual PostgreSQL deployment is external.
-5. **Application/database session → PostgreSQL RLS**: production session settings and role selection can enforce or defeat tenant isolation and remain outside the offline core.
-6. **Institution KMS/HSM → key references**: only reference/public material crosses into RegAgentOps; private/symmetric keys remain external.
-7. **KMS/HSM signer → configuration registry**: signature bytes cross the boundary and are locally verified before append.
-8. **KMS/HSM encryptor/decryptor → encrypted evidence**: authenticated ciphertext/plaintext crosses the adapter boundary; raw key material does not.
-9. **Evidence batch → external immutable anchor**: exact batch digest is sent externally and an opaque provider receipt is represented locally.
-10. **Assurance/hardening evidence → auditor/operations**: deployed-state correctness, evidence sufficiency and compliance conclusions remain external.
-11. **Execution lease ledger → external executor**: one-time consumption remains the final RegAgentOps pre-dispatch boundary.
+1. **Caller → identity/policy plane**: action and identity inputs are untrusted until verified.
+2. **Institution governance → policy/MCP/data/approval state**: privileged configuration determines governance evidence.
+3. **Authenticated authorization → external executor**: exact current authorization plus one-time lease remains execution authority.
+4. **Database/KMS/HSM/external anchor → v0.8 reference artefacts**: actual enforcement/custody remains external.
+5. **v0.8 tenant-isolation registry → deployment registry**: current RLS/tenant profile becomes a mandatory production-worker dependency.
+6. **Network-security platform → egress policy**: the platform must translate and enforce exact tenant endpoint/trust rules.
+7. **Dispatch platform → tool allowlist**: the external dispatcher must enforce exact governed-tool→executor bindings.
+8. **Container/orchestrator → worker profile**: runtime isolation controls are external facts represented by the profile.
+9. **GitHub security/build pipeline → release manifest**: CodeQL, artifact/checksum and provenance evidence is imported by digest.
+10. **Change process → upgrade/rollback plan**: signed configuration and exact transition evidence constrain promotion.
+11. **Backup/DR platform → recovery checkpoint**: backup existence, integrity and restorability remain external facts.
 
-## Primary v0.8 threats and controls
+## Primary v0.9 threats and controls
 
-### PostgreSQL RLS injection or partial policy
+### Wildcard, plaintext or aliased-IP egress expansion
 
-Threat: a policy renderer accepts arbitrary SQL identifiers/fragments, fails to force RLS, protects reads without protecting writes, or scopes only by tenant without institution.
+Threat: a deployment policy permits broad domains, paths, arbitrary schemes, plaintext endpoints or multiple textual encodings of the same IP, turning the policy worker into an uncontrolled network pivot or bypassing endpoint uniqueness.
 
-Controls: table/policy/column identifiers use a bounded lowercase identifier grammar; session settings must use `regagentops.*`; the renderer always emits `ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY`, and the same exact institution+tenant predicate in both `USING` and `WITH CHECK`.
+Controls: `EgressPolicy` is structurally default deny, `allow_wildcards=false`, `allow_plaintext=false`, and accepts only governed `https`/`tls` protocol values. Hosts must be canonical exact lowercase hostname/IP values with no wildcard, URL path or scheme. IP values must equal the canonical textual representation produced by the IP parser. Each exact protocol/host/port endpoint can appear only once and carries a trust-policy digest.
 
-Residual boundary: v0.8 does not connect to PostgreSQL or prove that the rendered DDL is installed, enabled on every relevant table, resistant to privileged-role bypass, or consistently applied to replicas/backups.
+Residual boundary: RegAgentOps does not resolve DNS, pin live addresses/certificates or install firewall/CNI/mesh rules. External enforcement can still be misconfigured.
 
-### Cross-tenant RLS profile substitution
+### Cross-tenant egress or tenant-isolation substitution
 
-Threat: a tenant profile references unknown or institution-foreign RLS policy evidence.
+Threat: a worker for tenant A binds egress policy or v0.8 tenant-isolation evidence belonging to tenant B, or simply supplies a syntactically valid but unknown tenant-isolation digest.
 
-Control: `TenantIsolationRegistry` resolves every policy digest in the same institution before registering a tenant profile. Policy/profile versions are immutable and contiguous.
+Controls: `ProductionDeploymentRegistry.register_worker_profile()` resolves egress/tool state only within the same institution+tenant and receives the actual v0.8 `TenantIsolationRegistry`. It resolves the current tenant profile and requires the worker's `tenant_isolation_profile_digest` to equal that exact artifact digest. Unknown, cross-tenant or superseded profile evidence fails closed.
 
-### KMS/HSM custody laundering
+### Tool allowlist ambiguity
 
-Threat: software-held keys are represented as institution-controlled hardware/cloud custody, or symmetric/private key bytes leak into governance artifacts.
+Threat: one governed tool maps to multiple executors or an empty/default rule silently becomes allow-by-default.
 
-Controls: key-reference custody is structurally restricted to `kms` or `hsm`; configuration signing references expose only an Ed25519 public key; evidence-encryption references forbid public/raw symmetric material. No private/symmetric key field exists in the v0.8 contracts.
+Controls: `ToolAllowlistPolicy` requires `default_deny=true` and `direct_tool_invocation_allowed=false`. A governed tool ID may appear once per policy version and therefore binds to one exact executor plus one exact governance-binding digest.
 
-Residual boundary: the label is a governance assertion. v0.8 does not obtain provider attestation or prove the external system is genuinely hardware-backed or correctly administered.
+### Policy-worker privilege escalation
 
-### Cross-tenant key substitution
+Threat: the policy worker gains host namespaces, root/privileged mode, writable root filesystem, Linux capabilities or direct tool credentials and becomes an execution pivot.
 
-Threat: a signer/encryptor/decryptor for one tenant or key version is used for another tenant's artifact.
+Controls: `IsolatedPolicyWorkerProfile` requires network namespace isolation, non-root, read-only root filesystem, no-new-privileges, all capabilities dropped and `RuntimeDefault` seccomp while requiring privileged/host-network/host-PID/host-IPC/direct-tool-invocation flags to be false. JSON Schema pins the same values.
 
-Controls: key references bind institution, tenant, purpose, key id and version. Sign/encrypt/decrypt adapters must expose matching metadata and mismatch fails closed. Signed/encrypted artifacts also bind the exact key-reference digest.
+Residual boundary: the core does not inspect a live container. Orchestrator admission controls and runtime monitoring must prove/enforce the profile.
 
-### Key-rotation ambiguity
+### Stale policy or RLS worker registration
 
-Threat: multiple versions reuse a key identity or non-contiguous versions obscure which key was intended.
+Threat: a newly registered worker profile intentionally binds superseded egress, tool or tenant-isolation state.
 
-Controls: versions are contiguous per institution/tenant/purpose and rotated versions require distinct `key_id` values. New operations require an `ACTIVE` key. Historical verification/decryption can accept ordinary retirement but rejects `DISABLED` keys.
+Controls: worker registration resolves exact current egress/tool policies and current v0.8 tenant-isolation profile. The worker timestamp must be at or after all three dependencies. Egress/tool/worker histories are append-only and v0.8 tenant isolation remains append-only/versioned.
 
-Residual boundary: the immutable reference model does not itself execute provider-side disable/delete/rotation operations; v0.9 runbooks and adapters must implement those lifecycle actions.
+### Backdated worker or release evidence
 
-### Configuration-change signature substitution
+Threat: a worker or release claims to have existed before the policies/profile it depends on, creating misleading historical evidence.
 
-Threat: a signed configuration change is modified, signed under another tenant/key, or detached from the exact previous change.
+Controls: worker `registered_at` cannot predate bound current egress, tool or tenant-isolation profile time. Release `created_at` cannot predate its worker profile. Rollback, upgrade and recovery chronology is also dependency checked.
 
-Controls: domain-separated Ed25519 signing binds institution, tenant, sequence, request digest, exact key-reference digest, previous signed-change digest and signing time. Verification resolves the exact registered key reference and checks signature/key validity at signing time.
+Residual boundary: these are application timestamps, not an independent timestamp authority.
 
-### Configuration-chain fork or replay
+### Release evidence substitution
 
-Threat: two competing changes extend the same tenant chain, a sequence is skipped, or an old chain head is reused.
+Threat: a release manifest points to one source commit while binding a different artifact, worker, configuration, CodeQL result, provenance record or checksum set.
 
-Controls: `ConfigurationChangeRegistry` requires one contiguous tenant sequence and exact previous `SignedConfigurationChange` digest. Chain chronology cannot move backwards.
+Controls: `DeploymentReleaseManifest` digest-binds strict source Git SHA, semantic release version, artifact SHA-256, worker/configuration digest and exact CodeQL/provenance/checksum evidence digests. Release identities are immutable and versions increase monotonically per tenant.
 
-### Stale-object overwrite
+Residual boundary: the offline core does not independently fetch GitHub/Sigstore evidence or decide whether CodeQL alert state satisfies institutional acceptance policy.
 
-Threat: a validly signed writer changes an object from an obsolete prior state and overwrites a newer represented configuration.
+### Stale release deployment after policy or tenant drift
 
-Control: the registry tracks the latest represented digest per tenant/object identity. Subsequent changes to that object must bind the exact current digest as `previous_configuration_digest`.
+Threat: a previously valid release is redeployed after egress/tool policy, worker hardening or v0.8 tenant-isolation/RLS state has changed.
 
-Residual boundary: the registry represents configuration state; it does not independently verify that every external system applied the represented change.
+Control: `assert_release_current()` resolves the exact registered release and requires the same current worker profile, egress policy, tool allowlist and tenant-isolation profile. Any superseded dependency fails closed.
 
-### AES-GCM tenant/AAD substitution
+### Version rollback disguised as upgrade
 
-Threat: ciphertext from another tenant, key, envelope or subject is relabeled as current evidence.
+Threat: an `UpgradePlan` points to an older or equal release while being represented as forward promotion.
 
-Controls: domain-separated AAD binds envelope id, institution, tenant, exact key-reference digest and subject-artifact digest. The envelope also records AAD and plaintext SHA-256 digests. Adapter metadata must match the exact key reference.
+Control: registered upgrade target semantic version must be strictly greater than the from-release version.
 
-### Ciphertext tampering
+### Fake rollback path
 
-Threat: encrypted governance evidence is modified while retaining metadata.
+Threat: an upgrade package references a rollback plan that does not actually reverse the proposed transition.
 
-Controls: AES-256-GCM authenticated decryption is required by the adapter contract, and plaintext digest verification runs after decryption. Modified AAD changes the recorded AAD digest; modified ciphertext must fail provider authentication or plaintext-digest verification.
+Control: the rollback source must equal the upgrade target and rollback target must equal the upgrade source. `register_upgrade()` rejects any other relationship.
 
-Residual boundary: v0.8 cannot prove nonce uniqueness across every independent external caller. The core generates a fresh 96-bit nonce by default; production integration must maintain the same uniqueness property.
+### Unsafe rollback target
 
-### External-anchor receipt substitution
+Threat: a rollback points laterally/forward or to an unregistered release.
 
-Threat: a receipt for another tenant or batch is attached to the current audit chain.
+Controls: both releases must resolve in the same institution+tenant and the rollback target version must be strictly older. Trigger-condition digests, verification-procedure digest and bounded rollback window are mandatory.
 
-Controls: `ExternalAuditAnchorReceipt` binds exact institution, tenant and `AuditAnchorBatch` digest. Registration rejects scope or batch mismatch.
+### Recovery checkpoint substitution
 
-### Audit-anchor chain fork or backdating
+Threat: a checkpoint claims one release/configuration but points to an unrelated backup, anchor or restore verification.
 
-Threat: batches skip/fork sequence, reference the wrong previous record, or claim an external anchor predating the local batch.
+Control: checkpoint digest binds exact tenant release, configuration, encrypted-backup, external-audit-anchor and restore-verification digests. Registration resolves the release in the same tenant and rejects a checkpoint timestamp that predates it.
 
-Controls: batches are tenant-scoped, contiguous and bind the exact previous `AuditAnchorRecord` digest. Registry chronology enforces batch assembly <= external anchor <= local recording and non-decreasing recorded time.
+Residual boundary: a digest does not prove the backup exists or restores successfully. DR requires independent restore testing.
 
-Residual boundary: provider receipt authenticity, true external immutability and independent timestamp accuracy are not proven by the opaque receipt digest alone.
+### Supply-chain provenance overclaim
 
-### Hardening-to-execution privilege escalation
+Threat: the existence of CodeQL or artifact attestation is represented as proof the release is secure.
 
-Threat: possession of an RLS policy, encrypted evidence or anchor receipt is treated as permission to execute an agent action.
+Controls: release evidence fields are documented as evidence bindings rather than safety verdicts. CI separates CodeQL analysis, release provenance and functional boundary tests. Tag-scoped provenance does not substitute for security review.
 
-Control: v0.8 hardening types are not accepted as policy effects, approval continuation or execution-lease authority. Existing authorization and execution boundaries remain unchanged.
+Residual boundary: institutions must define acceptable CodeQL alert thresholds, provenance verification policy and release approval.
 
-## Existing v0.2-v0.7 threats retained
+### Test-build attestation noise
 
-Prior controls remain active: authenticated identity and key-confusion defenses; requester/approver separation and replay controls; bounded explicit MCP governance; exact data-purpose classification/purpose/output/retention controls; authorization freshness; executor-bound one-time leases; emergency-stop currentness; signed execution receipts; human-reviewed assurance applicability/crosswalk/package integrity; and non-certification semantics.
+Threat: frequent PR/test builds are attested and later confused with actual release provenance.
+
+Control: `Release Provenance Gate` builds/checks the release contract on PRs, but the actual `actions/attest@v4` job is restricted to `v*` tags and requires the tag to exactly match `pyproject.toml` version.
+
+### Deployment metadata becomes execution authority
+
+Threat: a valid release/worker/rollback/checkpoint artefact is treated as permission to execute an agent action.
+
+Control: v0.9 deployment types are not inputs to authorization, approval or execution-lease policy effects. `deployment.py` has no network, deployment or tool-invocation interface.
+
+## Earlier threats retained
+
+v0.8 PostgreSQL RLS, tenant substitution, KMS/HSM custody, key lifecycle, configuration-chain, AES-GCM and audit-anchor controls remain active. v0.2-v0.7 authenticated identity, approval separation/replay, MCP governance, data-purpose control, execution freshness/one-time leases, emergency stop, signed receipt and human-reviewed assurance controls remain active.
 
 ## Capability creep
 
-Threat: hardening code quietly becomes a PostgreSQL migration client, cloud KMS SDK integration, external-log client or production executor.
+Threat: the production-reference module quietly becomes a Kubernetes/cloud/database/network client or a direct tool executor.
 
-Controls: generic CI and the dedicated Tenant and Cryptographic Hardening Boundary reject network/process imports plus PostgreSQL/cloud-SDK/client markers in `hardening.py`. The module renders SQL text and consumes adapter protocols only.
+Controls: generic CI and the dedicated Production Reference Deployment Boundary parse `deployment.py` and reject network/process imports plus deployment/connection/tool-invocation markers. The module only creates/validates deterministic metadata and consumes the existing in-memory v0.8 tenant-isolation registry.
+
+## CI/supply-chain configuration risk
+
+CodeQL and GitHub Actions workflows are themselves privileged build configuration. A malicious workflow change could weaken queries, attest an unintended artifact or broaden permissions.
+
+Controls: workflow files are version controlled, covered by the dedicated production-reference gate, and checked for CodeQL v4/security-extended, tag-only attestation, required OIDC/attestation permissions and checksum generation. Branch protection/review policy is still required outside this codebase.
 
 ## Residual risks
 
-Actual PostgreSQL RLS effectiveness depends on production role architecture, session-setting integrity, migration completeness, superuser/BYPASSRLS control, backup/replica isolation and operational monitoring.
+Actual worker isolation depends on orchestrator/runtime configuration, admission policy, kernel/container security and monitoring. The worker profile is evidence, not remote attestation.
 
-Actual KMS/HSM security depends on provider IAM, key policies, hardware/service guarantees, entropy, quorum/approval configuration, audit logging, rotation and compromise response. v0.8 stores references and verifies cryptographic outputs; it is not the custody system.
+Actual RLS and egress enforcement depends on PostgreSQL roles/session context plus firewall/CNI/service-mesh/proxy and DNS/TLS trust controls. A privileged platform/database operator may still bypass external controls.
 
-Configuration-change artifacts prove the represented signature/chain, not that every downstream component applied the intended configuration or that unauthorized out-of-band changes are impossible.
+Actual tool dispatch depends on executor IAM/credentials and the external dispatcher honoring the allowlist and v0.5 one-time lease boundary.
 
-Encrypted envelopes protect represented bytes under the adapter's AES-GCM operation but do not independently guarantee secure plaintext handling before encryption or after decryption.
+CodeQL can miss vulnerabilities; provenance can faithfully attest a malicious or vulnerable build. Neither is a substitute for secure development, review, dependency governance or runtime defense.
 
-External anchor records prove exact linkage to a declared provider receipt digest but do not establish legal admissibility, provider independence or physical WORM guarantees.
+Backups, replicas, restore tooling, RTO/RPO, regional failover and production state reconciliation remain external operational controls.
 
-SQLite approval/execution ledgers remain local serialization boundaries rather than distributed consensus. In-memory governance/hardening registries are reference state rather than tenant-isolated durable production stores.
+In-memory deployment/hardening registries and local SQLite approval/execution ledgers remain reference state, not a distributed highly available production datastore.
 
 ## Explicit non-claims
 
-v0.8 does not provide or claim:
+v0.9 does not provide or claim:
 
-- deployed PostgreSQL RLS verification or absolute non-bypassability;
-- automatic PostgreSQL migration/session-role management;
-- KMS/HSM provider attestation, FIPS validation or proof of hardware custody;
-- secure cloud/database IAM administration;
-- raw private/symmetric-key custody in the RegAgentOps core;
-- guaranteed nonce uniqueness across every external integration;
-- proof that external audit anchors are immutable, independently timestamped or legally sufficient;
-- backup/replica tenant isolation or database encryption-at-rest proof;
-- production key rotation, incident response or disaster-recovery execution;
-- automatic framework/legal compliance determination;
-- autonomous MCP connectivity or production tool invocation by the core;
-- distributed exactly-once execution across multiple executor nodes;
-- regulatory or standards certification; or
+- Kubernetes/VM/container deployment or admission enforcement;
+- live firewall/CNI/service-mesh/proxy configuration;
+- DNS/TLS endpoint verification by the offline core;
+- production executor credential management or direct tool invocation;
+- proof that worker isolation flags or PostgreSQL RLS are active in a live runtime;
+- CodeQL zero-vulnerability assurance or automatic alert-acceptance policy;
+- in-core GitHub/Sigstore attestation verification;
+- proof that a backup is restorable or that RTO/RPO was achieved;
+- KMS/HSM hardware custody proof;
+- compliance, certification, regulatory approval, supervisory acceptance; or
 - production fitness.

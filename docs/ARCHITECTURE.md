@@ -1,10 +1,10 @@
 # RegAgentOps Architecture
 
-## v0.8 boundary
+## v0.9 boundary
 
-RegAgentOps v0.8 is an **offline authenticated authorization, data/purpose governance, human-approval, MCP-governance, signed execution-evidence, human-reviewed assurance-evidence, tenant-isolation and cryptographic-hardening control plane**.
+RegAgentOps v0.9 is an **offline authorization, approval, MCP-governance, execution-evidence, data/purpose, assurance, tenant/cryptographic-hardening and production-reference control plane**.
 
-The v0.8 hardening layer is adapter-oriented. It defines exact PostgreSQL RLS, KMS/HSM key-reference, signed configuration-change, encrypted-evidence and external-anchor artifacts without opening database, cloud, network or production-execution capability inside the core.
+The v0.9 deployment layer remains non-deploying. It defines exact worker-isolation, egress/tool-allowlist, release, rollback, upgrade and recovery artefacts plus CI/supply-chain gates. It does not open sockets, deploy workloads, install firewall/RLS rules or invoke tools.
 
 ```text
                     EXECUTION CONTROL PLANE
@@ -50,148 +50,159 @@ AgentActionEnvelope ------+------ PolicyBundle
                           v
              SignedToolExecutionReceipt
 
-                    ASSURANCE EVIDENCE PLANE
+                    ASSURANCE / HARDENING
 
-Signed/governed artifacts --> AssuranceEvidenceReference
-                                  |
-                         human applicability/mapping
-                                  |
-                                  v
-                       AssuranceEvidencePackage
+existing signed evidence --> human assurance crosswalk/package
 
-                    HARDENING REFERENCE PLANE
+PostgresRlsPolicy --> TenantIsolationProfile
+InstitutionCryptoKeyReference --> signed config / AES-GCM evidence
+                                        |
+                                external audit anchor
 
-PostgresRlsPolicy ----> TenantIsolationProfile
-        |
-        +---- safe reference DDL: ENABLE + FORCE RLS
-              exact institution+tenant USING/WITH CHECK
+                    PRODUCTION REFERENCE
 
-InstitutionCryptoKeyReference (KMS/HSM only)
-        |                         |
-        | Ed25519                 | AES-256-GCM
-        v                         v
-SignedConfigurationChange   EncryptedGovernanceEvidence
-        |                         |
-        +------ exact tenant -----+
-                  bindings
-                         |
-                         v
-                  AuditAnchorBatch
-                         |
-            external immutable service
-                         |
-                         v
-             ExternalAuditAnchorReceipt
-                         |
-                         v
-                 AuditAnchorRecord
+current TenantIsolationProfile --+
+EgressPolicy ---------------------+
+ToolAllowlistPolicy ---------------+--> IsolatedPolicyWorkerProfile
+                                         |
+                                         v
+                              DeploymentReleaseManifest
+                          source SHA + artifact SHA-256
+                          worker/configuration digest
+                          CodeQL/provenance/checksum evidence
+                                         |
+                               +---------+---------+
+                               |                   |
+                               v                   v
+                           UpgradePlan <----> RollbackPlan
+                               |
+                               v
+                        RecoveryCheckpoint
 ```
 
-## PostgreSQL RLS reference boundary
+## Production worker isolation
 
-`PostgresRlsPolicy` is immutable/versioned policy metadata. Table, policy and column names must match a bounded lowercase PostgreSQL identifier grammar, preventing the reference renderer from accepting arbitrary SQL fragments. Session settings are restricted to the `regagentops.*` namespace.
+`IsolatedPolicyWorkerProfile` represents the minimum isolation posture expected from an external runtime adapter. A valid profile requires isolated network namespace, non-root execution, read-only root filesystem, no-new-privileges, all Linux capabilities dropped, `RuntimeDefault` seccomp, no privileged mode, no host network/PID/IPC namespaces and no direct tool invocation.
 
-`render_postgres_rls_sql()` always emits `ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY`, and the same exact institution+tenant predicate in both `USING` and `WITH CHECK`. The reference therefore covers row visibility and attempted writes.
+The profile binds exact tenant-scoped egress/tool policy digests plus the exact v0.8 tenant-isolation profile digest and an exact worker-image SHA-256.
 
-`TenantIsolationProfile` is institution/tenant/environment scoped and binds a database role to exact RLS-policy digests. `TenantIsolationRegistry` keeps policy/profile versions append-only and contiguous and exposes a digest snapshot for integration evidence.
+The deployment registry receives the v0.8 `TenantIsolationRegistry` as an explicit dependency. Worker registration resolves the **current** tenant-isolation profile from that registry and requires the supplied digest to match. It therefore cannot accept a fabricated, foreign or superseded tenant-profile digest merely because it is syntactically valid.
 
-The core does not apply SQL. A production adapter must set transaction/session context safely and prove the expected role/policies exist in the target PostgreSQL deployment.
+Worker registration also enforces dependency chronology: the worker profile cannot predate the current egress policy, tool allowlist or tenant-isolation profile it claims to bind.
 
-## Institution-owned KMS/HSM key-reference boundary
+These fields are declarative reference requirements. The core does not create a container or independently attest that a container runtime enforced them.
 
-`InstitutionCryptoKeyReference` is scoped by institution, tenant, purpose and key version. Custody is restricted to `kms` or `hsm`.
+## Egress boundary
 
-Two v0.8 key purposes are recognized:
+`EgressPolicy` is append-only/versioned per institution+tenant. It is structurally default deny, forbids wildcard destinations and plaintext transport, and permits only exact `https` or generic `tls` endpoint tuples.
 
-- configuration signing: Ed25519, with only the public verification key represented;
-- governance-evidence encryption: AES-256-GCM, with no symmetric key bytes represented.
+Each `EgressDestination` binds exact protocol, canonical host, port, purpose and external `trust_policy_digest`. A host cannot contain wildcard/path/scheme material. IP addresses must use their canonical textual representation; alternate text encodings of the same IP are rejected. One endpoint can appear only once in a policy.
 
-`InstitutionCryptoKeyRegistry` is append-only per institution/tenant/purpose. Versions are contiguous and rotation requires distinct key IDs. `ACTIVE` keys may create new cryptographic artifacts. Historical verification/decryption accepts keys that are still `ACTIVE` or have become `RETIRED`, provided they were valid at artifact creation. `DISABLED` fails closed.
+The core does not resolve DNS, validate a live certificate or install network rules. A production CNI/firewall/proxy/service mesh must implement the policy and its trust-resolution rules.
 
-The registry does not prove hardware custody. The external adapter remains responsible for actual KMS/HSM authorization, generation, key policy, audit, rotation and compromise response.
+## Tool dispatch boundary
 
-## Signed configuration change control
+`ToolAllowlistPolicy` is append-only/versioned and default deny. One governed tool ID maps to at most one exact external executor per policy version, together with its existing governance-binding digest.
 
-`ConfigurationChangeRequest` binds exact tenant, sequence, object identity, previous/proposed configuration digests, reason digest, requester and chronology.
+The policy worker itself is intentionally non-invoking. Actual dispatch remains behind the v0.5 lease/consumption/executor boundary. The v0.9 allowlist narrows where an already-governed action may be dispatched; it does not create new authorization authority.
 
-`SignedConfigurationChange` uses a domain-separated signing document with purpose `regagentops.configuration-change.v1`. The signature binds:
+## Worker and policy currentness
 
-- exact request digest;
-- exact previous signed-change digest;
-- exact institution/tenant;
-- exact KMS/HSM key-reference digest;
-- key id/version and Ed25519 algorithm; and
-- signing time.
+`ProductionDeploymentRegistry.register_worker_profile()` resolves exact egress/tool policies in the same tenant and requires them to be current. It also resolves the current v0.8 tenant-isolation profile.
 
-`ConfigurationChangeRegistry.append()` verifies the signature internally before storing the artifact. It then enforces one contiguous tenant-wide chain, exact previous-change linkage, non-decreasing chronology, and exact prior object state for previously changed objects. A stale configuration writer therefore cannot silently overwrite a newer represented object state.
+Egress, tool, tenant-isolation and worker profiles remain immutable historical evidence. Superseding any of those dependencies does not rewrite the old worker; it makes that worker stale for current deployment use.
 
-The signer is a protocol. Production signing can be performed behind KMS/HSM adapters without exposing the private key to RegAgentOps.
+## Release manifest
 
-## Tenant-scoped encrypted governance evidence
+`DeploymentReleaseManifest` binds one tenant release to strict `MAJOR.MINOR.PATCH` version, exact 40-character source Git commit SHA, safe artifact name and SHA-256, exact worker-profile and production-configuration digests, CodeQL evidence digest, provenance-attestation evidence digest and checksum-manifest digest.
 
-`EncryptedGovernanceEvidence` is an AES-256-GCM envelope around governance evidence bytes. The encryption/decryption providers are protocols whose institution, tenant, key id/version and algorithm must match the exact registered encryption-key reference.
+A release cannot predate its worker profile. Release versions must increase monotonically for a tenant and each release identity is immutable.
 
-AAD is domain separated with purpose `regagentops.tenant-encrypted-governance-evidence.v1` and binds envelope id, institution, tenant, exact key-reference digest and subject-artifact digest. The envelope also records raw plaintext SHA-256 and AAD SHA-256 digests.
+`assert_release_current()` resolves the registered release and fails closed when any of the following is stale:
 
-New encryption requires an `ACTIVE` key valid at `encrypted_at`. Historical decryption can use an `ACTIVE` or `RETIRED` key that was valid at encryption time; `DISABLED` keys fail closed. The default nonce is a fresh 96-bit random value, while deterministic nonce injection exists only to support controlled tests.
+- worker profile;
+- egress policy;
+- tool allowlist; or
+- v0.8 tenant-isolation profile.
 
-## External audit anchoring
+This gives a surrounding deployment controller an explicit drift precondition without RegAgentOps performing the deployment itself.
 
-`AuditAnchorBatch` groups exact evidence-artifact digests in a tenant-scoped contiguous chain. Each batch after the first binds the exact previous `AuditAnchorRecord` digest.
+## Upgrade and rollback integrity
 
-`ExternalAuditAnchorReceipt` represents the opaque result of an external immutable/timestamping service: provider id, anchor id, exact batch digest, provider-receipt digest and anchor time.
+`RollbackPlan` references exact registered releases. The target must have an older semantic version than the source. Trigger-condition digests, verification-procedure digest and bounded rollback window are mandatory.
 
-`AuditAnchorRegistry.register()` verifies tenant scope, exact batch binding, contiguous sequence, exact previous record and monotonic assembly → anchoring → recording chronology before creating `AuditAnchorRecord`.
+`UpgradePlan` references exact from/to releases, migration/preflight/post-deploy evidence, a v0.8 signed configuration-change digest and an exact rollback plan. The to-release must be newer, and the registered rollback plan must **exactly reverse** the upgrade transition.
 
-This proves exact local linkage to a declared external receipt digest; it does not independently prove the provider is immutable or that its timestamp has a specific legal evidentiary status.
+This prevents a release package from advertising a rollback artefact whose real source/target does not match the proposed change.
 
-## Relationship to authorization and assurance
+## Recovery checkpoint
 
-v0.8 does not change policy precedence or add new authorization effects. The flow remains one-way:
+`RecoveryCheckpoint` binds exact tenant release/configuration to encrypted-backup evidence, external audit-anchor record and restore-verification evidence. It cannot predate the release.
+
+A checkpoint is not proof that a backup is restorable. The DR runbook requires independent backup/hash/key/anchor checks and an isolated restore-verification process.
+
+## Chronological provenance
+
+The production-reference registry enforces dependency ordering in addition to append-only versioning:
 
 ```text
-policy/data/MCP/approval/execution artifacts
-           |                     |
-           |                     +--> assurance crosswalk/package
-           |
-           +--> tenant encryption / audit anchoring
-
-hardening artifact -X-> policy ALLOW
-hardening artifact -X-> approval continuation
-hardening artifact -X-> execution lease creation
+egress/tool/tenant-isolation registered_at <= worker registered_at <= release created_at
+release created_at <= rollback/recovery created_at
+new release + rollback created_at <= upgrade created_at
 ```
 
-Hardening artifacts can protect/configure a production adapter, but the offline core does not treat the existence of an RLS policy, encryption envelope or anchor receipt as authority to execute an action.
+These timestamps are application evidence, not an independent timestamp authority.
 
-## Existing boundaries retained
+## Supply-chain gates
 
-v0.1 policy precedence remains `DENY > REQUIRE_HUMAN_APPROVAL > ALLOW_WITH_CONSTRAINTS > ALLOW`. v0.2 authenticated identity remains mandatory. v0.3 approval cannot override denial. v0.4 MCP governance remains explicit/non-executing. v0.5 leases remain short-lived, one-time and executor-bound. v0.6 data-purpose governance remains exact/currentness checked. v0.7 assurance remains human-reviewed and non-certifying.
+v0.9 separates three CI concerns:
+
+1. **CI / boundary tests**: Python regression, schemas and capability separation.
+2. **CodeQL**: advanced Python CodeQL analysis with `security-extended` queries.
+3. **Release Provenance Gate**: PR-time release build/checksum contract, plus tag-only GitHub artifact attestation for actual version-matching release builds.
+
+`DeploymentReleaseManifest` stores evidence digests from those external controls; the offline core does not call GitHub APIs or decide that a CodeQL result/attestation is acceptable.
+
+## Operational runbooks
+
+Deployment, incident-response, KMS/HSM key-rotation and disaster-recovery runbooks define accountable operational preconditions and retained evidence. They intentionally do not contain an embedded privileged automation client.
+
+## Relationship to earlier boundaries
+
+v0.9 does not change authorization precedence:
+
+`DENY > REQUIRE_HUMAN_APPROVAL > ALLOW_WITH_CONSTRAINTS > ALLOW`
+
+v0.2 authenticated identity remains mandatory. v0.3 approval cannot override denial. v0.4 MCP governance remains explicit. v0.5 leases remain short-lived, one-time and executor-bound. v0.6 data-purpose controls remain currentness checked. v0.7 assurance remains human-reviewed/non-certifying. v0.8 tenant/crypto hardening remains append-only and adapter-oriented.
+
+Deployment artefacts cannot create an `ALLOW`, satisfy human approval, issue a lease or bypass emergency stop.
 
 ## Trust boundaries
 
-1. **Caller → identity/policy plane**: request and identity inputs remain untrusted until verified.
-2. **Institution governance → data/MCP registries**: policy-supporting configuration remains privileged administrative input.
-3. **Authenticated authorization → approval/execution**: exact current authorization artifacts remain execution authority.
-4. **Institution → RLS reference artifacts**: policy metadata is privileged; rendered DDL becomes effective only when a production database adapter installs it.
-5. **Application/database session → PostgreSQL RLS**: session institution/tenant settings and database role become a critical production boundary outside the offline core.
-6. **Institution KMS/HSM → crypto-key reference**: only public/reference metadata crosses into RegAgentOps; private/symmetric key custody remains external.
-7. **KMS/HSM signing adapter → signed configuration registry**: externally produced signature bytes cross the boundary and are locally verified before append.
-8. **KMS/HSM encryption adapter → encrypted evidence**: plaintext/AAD are provided to the adapter and authenticated ciphertext returns; key bytes do not cross.
-9. **Evidence store → external anchor service**: exact batch digest is anchored externally; an opaque receipt digest returns.
-10. **Assurance/hardening evidence → auditor/operations**: sufficiency, deployed-state correctness and compliance conclusions remain external.
+1. **Caller → identity/policy plane**: request and identity input is untrusted until verified.
+2. **Institution governance → MCP/data/approval registries**: privileged configuration establishes policy evidence.
+3. **Authenticated authorization → execution**: exact current authorization/approval/data/MCP state remains execution authority.
+4. **Database/KMS/HSM/external anchor → v0.8 references**: production custody/enforcement remains external.
+5. **Tenant-isolation registry → deployment registry**: the exact current v0.8 profile becomes a mandatory worker dependency.
+6. **Network/security platform → `EgressPolicy`**: external platform must enforce exact endpoint/trust rules represented by the artefact.
+7. **Executor platform → `ToolAllowlistPolicy`**: external dispatcher must reject unlisted tool/executor combinations.
+8. **Container/orchestrator → worker profile**: runtime must enforce the isolation flags represented by the profile.
+9. **Build/security pipeline → release manifest**: source/artifact/CodeQL/provenance/checksum evidence crosses into deployment evidence by digest.
+10. **Change operator → upgrade/rollback**: signed configuration and exact reverse-transition evidence constrain change planning.
+11. **Backup/DR platform → recovery checkpoint**: backup existence/restorability remains an external fact represented by digest evidence.
 
-## Historical evidence versus current state
+## Historical evidence versus current deployment eligibility
 
-RLS policies, tenant profiles, crypto-key references, signed changes, encrypted envelopes and anchor records are immutable historical artifacts. New policy/profile/key versions create new exact digests rather than rewriting old records.
+Policies, profiles, releases, rollback/upgrade plans and checkpoints are immutable historical artefacts. Historical evidence is not automatically destroyed when a newer version appears.
 
-Historical cryptographic evidence remains verifiable/decryptable across ordinary key retirement when the adapter retains access and the key was valid at artifact creation. A key marked `DISABLED` is treated as unsafe and rejected.
+Current deployment eligibility is stricter: release currentness requires its exact worker profile and the worker's exact egress, tool and tenant-isolation policies to still be current. Historical evidence therefore remains reviewable without allowing stale deployment controls to masquerade as current.
 
 ## Capability separation
 
-`hardening.py` contains no PostgreSQL driver, cloud SDK, KMS/HSM client, external-log client, shell/process invocation or tool-execution interface. CI statically rejects those capability markers.
+`deployment.py` imports no networking/process/deployment SDK and contains no connection, deploy or tool-invocation interface. CI rejects those capability markers.
 
-The production realization of PostgreSQL RLS, KMS/HSM network calls, secrets authorization, immutable external storage, backup/replica isolation and operations monitoring is explicitly deferred to the v0.9 deployment boundary.
+The actual production adapter—Kubernetes/VM/container runtime, database, CNI/firewall/proxy, KMS/HSM, executor, backup platform and external immutable log—remains outside the governed core and must be independently secured and monitored.
 
-## Standards posture
+## Standards and platform posture
 
-The RLS renderer uses PostgreSQL row-level-security concepts as a deployment reference. Ed25519 and AES-256-GCM are cryptographic algorithm choices for the defined artifact boundaries. These choices are not a FIPS, HSM, cloud-provider, regulatory or certification claim.
+CodeQL and GitHub artifact attestations are CI/supply-chain controls used by this repository. Their presence is not a claim that software is vulnerability-free, that a release is safe, or that a particular deployment satisfies a regulatory framework. Operational and regulatory acceptance remains external.
