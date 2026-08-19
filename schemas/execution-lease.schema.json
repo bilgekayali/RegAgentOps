@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RegAgentOps Execution Lease",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["lease_id","institution_id","request_digest","authenticated_authorization_digest","policy_decision_digest","mcp_policy_enforcement_result_digest","mcp_registry_snapshot_digest","approval_requirement_digest","approval_resolution_digest","emergency_stop_state_digest","issued_at","expires_at","schema_version"],
+  "properties": {
+    "lease_id": {"type":"string","minLength":1,"maxLength":256},
+    "institution_id": {"type":"string","minLength":1,"maxLength":256},
+    "request_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "authenticated_authorization_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "policy_decision_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "mcp_policy_enforcement_result_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "mcp_registry_snapshot_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "approval_requirement_digest": {"oneOf":[{"type":"string","pattern":"^[0-9a-f]{64}$"},{"type":"null"}]},
+    "approval_resolution_digest": {"oneOf":[{"type":"string","pattern":"^[0-9a-f]{64}$"},{"type":"null"}]},
+    "emergency_stop_state_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "issued_at": {"type":"string","format":"date-time","pattern":"Z$"},
+    "expires_at": {"type":"string","format":"date-time","pattern":"Z$"},
+    "schema_version": {"const":"regagentops.execution-lease.v1"}
+  },
+  "allOf": [
+    {
+      "if": {"properties":{"approval_requirement_digest":{"type":"null"}},"required":["approval_requirement_digest"]},
+      "then": {"properties":{"approval_resolution_digest":{"type":"null"}}},
+      "else": {"properties":{"approval_resolution_digest":{"type":"string","pattern":"^[0-9a-f]{64}$"}}}
+    }
+  ]
+}
