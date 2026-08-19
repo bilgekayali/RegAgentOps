@@ -115,11 +115,16 @@ jobs:
               'requires_human_review',
               'never determines compliance or applicability',
               'scope.context_digest',
+              'new assurance scope context cannot predate existing deployment scope history',
               'applicability confirmation cannot predate assurance scope',
               'assurance evidence cannot predate assurance scope',
+              'exact assurance scope/framework reference already has an applicability assertion',
               'assurance mapping cannot predate applicability confirmation',
               'assurance mapping cannot predate mapped evidence',
+              'exact applicability assertion already has a crosswalk entry',
               'assurance package cannot predate its crosswalk entries',
+              'assurance evidence package identity already exists with different content',
+              'assurance evidence package does not match registered package identity',
           )
           for marker in required_markers:
               if marker not in source:
