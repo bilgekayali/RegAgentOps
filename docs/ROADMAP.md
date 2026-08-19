@@ -1,6 +1,6 @@
 # RegAgentOps Roadmap
 
-RegAgentOps evolves from an offline authorization core into a production-reference governance control plane. Version numbers represent completed control boundaries, not calendar dates.
+RegAgentOps evolves from an offline authorization core into a stable production-reference governance control plane. Version numbers represent completed control boundaries, not calendar dates.
 
 ## v0.1.0 — Governed Agent Authorization Core
 
@@ -118,10 +118,14 @@ RegAgentOps evolves from an offline authorization core into a production-referen
 
 ## v1.0.0 — Stable Regulated-Agent Governance Reference
 
-- [ ] stable CLI/API/JSON compatibility policy;
-- [ ] end-to-end production-reference deployment;
-- [ ] reproducible release checksums and provenance;
-- [ ] supported upgrade path from final v0.9.x;
-- [ ] independent security-review checklist closed or explicitly risk-accepted;
-- [ ] legal/accessibility responsibilities scoped;
-- [ ] explicit v1 non-claims retained.
+- [x] stable `regagentops.api`, CLI and JSON discriminator compatibility policy with committed v1 baselines;
+- [x] end-to-end stable release baseline binding every v0.1-v0.9 governance boundary to an exact current production-reference release;
+- [x] reproducible two-build wheel checksum gate and tag-scoped provenance attestations;
+- [x] exact supported upgrade path from a current final v0.9.x release to the exact 1.0.0 release;
+- [x] independent security-review **contract and v1.0.0 tag blocker** with item-level accountable-human risk-acceptance semantics;
+- [ ] real independent v1.0 security review completed, or each residual item explicitly risk-accepted by an accountable human;
+- [x] legal, privacy, accessibility, retention, jurisdiction-role and production-IAM responsibilities explicitly scoped;
+- [x] explicit v1 non-claims retained as machine-readable contract data;
+- [x] stable baseline chronology and current-eligibility revalidation fail closed after production drift.
+
+The unchecked review item is deliberately external to code generation. A PR merge or generic project approval is not treated as an independent review or as item-level risk acceptance. The `v1.0.0` tagged-release workflow remains blocked until genuine review evidence is supplied.
