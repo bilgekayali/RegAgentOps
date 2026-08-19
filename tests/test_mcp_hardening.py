@@ -76,7 +76,33 @@ class McpHardeningTests(unittest.TestCase):
         self.assertEqual(outcome.result.constraints, ("read-only",))
         self.assertFalse(outcome.result.human_approval_required)
         self.assertTrue(outcome.result.execution_permitted)
+        with self.assertRaisesRegex(ValueError, "continuation"):
+            replace(outcome.result, execution_permitted=False)
 
+    def test_high_risk_allow_still_requires_v03_approval_gate(self):
+        identity, registry, _, _, _, binding = mcp_test_module.McpGovernanceTests()._stack()
+        request = mcp_test_module.McpGovernanceTests()._request(binding, risk=RiskTier.HIGH)
+        policy = mcp_test_module.McpGovernanceTests()._policy(
+            binding,
+            effect=Decision.ALLOW,
+            risk=RiskTier.HIGH,
+        )
+        outcome = mcp_test_module.McpGovernanceTests()._pep(identity, registry).evaluate(
+            request,
+            policy,
+            identity.signed_identity(),
+            identity_trust_bundle=identity.trust,
+            evaluated_at=mcp_test_module.NOW,
+        )
+        self.assertEqual(outcome.result.decision, Decision.ALLOW)
+        self.assertTrue(outcome.result.identity_verified)
+        self.assertEqual(outcome.result.risk_tier, RiskTier.HIGH)
+        self.assertTrue(outcome.result.human_approval_required)
+        self.assertFalse(outcome.result.execution_permitted)
+        self.assertFalse(outcome.authorization.authorization.human_approval_required)
+
+    def test_policy_required_approval_is_non_executable_before_resolution(self):
+        identity, registry, _, _, _, binding = mcp_test_module.McpGovernanceTests()._stack()
         approval_request = mcp_test_module.McpGovernanceTests()._request(binding, risk=RiskTier.HIGH)
         approval_policy = mcp_test_module.McpGovernanceTests()._policy(
             binding,
