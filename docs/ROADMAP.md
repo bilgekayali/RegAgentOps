@@ -90,11 +90,13 @@ RegAgentOps evolves from an offline authorization core into a production-referen
 
 ## v0.8.0 — Tenant and Cryptographic Hardening
 
-- [ ] PostgreSQL RLS reference boundary;
-- [ ] institution-owned KMS/HSM keys;
-- [ ] signed configuration change control;
-- [ ] immutable/external audit anchoring;
-- [ ] tenant-scoped encrypted governance evidence.
+- [x] PostgreSQL RLS reference boundary with safe identifiers, forced RLS and exact institution+tenant `USING`/`WITH CHECK` predicates;
+- [x] append-only tenant-isolation profiles binding exact RLS policy digests;
+- [x] institution/tenant/purpose-scoped KMS/HSM key references with no embedded private or symmetric key bytes;
+- [x] Ed25519 domain-separated signed configuration changes with contiguous tenant chain and stale-object overwrite rejection;
+- [x] tenant-scoped AES-256-GCM governance-evidence envelopes with authenticated institution/tenant/key/subject bindings;
+- [x] append-only external audit-anchor chain bound to exact opaque provider receipt digests;
+- [x] strict tenant/crypto JSON contracts, adversarial tests, generic offline capability checks and dedicated hardening CI boundary.
 
 ## v0.9.0 — Production Reference Deployment
 
