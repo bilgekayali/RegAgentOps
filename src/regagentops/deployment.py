@@ -13,6 +13,7 @@ _HEX_64 = re.compile(r"^[0-9a-f]{64}$")
 _COMMIT_40 = re.compile(r"^[0-9a-f]{40}$")
 _SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 _HOST_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+_IPV4_LIKE = re.compile(r"^[0-9.]+$")
 _SAFE_FILENAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,254}$")
 
 
@@ -53,6 +54,8 @@ def _require_host(value: str) -> None:
         if str(parsed) != value:
             raise ValueError("egress IP must use canonical textual form")
         return
+    if _IPV4_LIKE.fullmatch(value):
+        raise ValueError("egress IPv4-like host must be a canonical IP address")
     if len(value) > 253 or value.endswith("."):
         raise ValueError("egress host must be a bounded canonical hostname")
     labels = value.split(".")
@@ -462,7 +465,20 @@ class ProductionDeploymentRegistry:
                 return item
         raise ValueError("unknown tenant tool allowlist digest")
 
+    def _assert_worker_dependencies_current(self, worker: IsolatedPolicyWorkerProfile) -> None:
+        if worker.egress_policy_digest != self.current_egress_policy(worker.institution_id, worker.tenant_id).artifact_digest:
+            raise ValueError("release egress policy is stale")
+        if worker.tool_allowlist_policy_digest != self.current_tool_allowlist(worker.institution_id, worker.tenant_id).artifact_digest:
+            raise ValueError("release tool allowlist is stale")
+        tenant_profile = self._tenant_isolation.current_profile(worker.institution_id, worker.tenant_id)
+        if worker.tenant_isolation_profile_digest != tenant_profile.artifact_digest:
+            raise ValueError("release tenant isolation profile is stale")
+
     def register_worker_profile(self, profile: IsolatedPolicyWorkerProfile) -> str:
+        key = (profile.institution_id, profile.tenant_id, profile.worker_profile_version)
+        existing = self._workers.get(key)
+        if existing is not None:
+            return self._same_or_conflict(existing, profile, "worker profile")
         egress = self._egress_by_digest(profile.institution_id, profile.tenant_id, profile.egress_policy_digest)
         tools = self._tools_by_digest(profile.institution_id, profile.tenant_id, profile.tool_allowlist_policy_digest)
         tenant_profile = self._tenant_isolation.current_profile(profile.institution_id, profile.tenant_id)
@@ -480,10 +496,6 @@ class ProductionDeploymentRegistry:
         )
         if profile_time < dependency_time:
             raise ValueError("worker profile cannot predate its current deployment policies")
-        key = (profile.institution_id, profile.tenant_id, profile.worker_profile_version)
-        existing = self._workers.get(key)
-        if existing is not None:
-            return self._same_or_conflict(existing, profile, "worker profile")
         history = self.worker_history(profile.institution_id, profile.tenant_id)
         expected = 1 if not history else history[-1].worker_profile_version + 1
         if profile.worker_profile_version != expected:
@@ -512,15 +524,16 @@ class ProductionDeploymentRegistry:
         raise ValueError("unknown tenant worker profile digest")
 
     def register_release(self, release: DeploymentReleaseManifest) -> str:
-        worker = self._worker_by_digest(release.institution_id, release.tenant_id, release.worker_profile_digest)
-        if worker.artifact_digest != self.current_worker_profile(release.institution_id, release.tenant_id).artifact_digest:
-            raise ValueError("release must bind the current worker profile")
-        if _parse_time("created_at", release.created_at) < _parse_time("worker registered_at", worker.registered_at):
-            raise ValueError("release cannot predate its worker profile")
         key = (release.institution_id, release.tenant_id, release.release_id)
         existing = self._releases.get(key)
         if existing is not None:
             return self._same_or_conflict(existing, release, "release")
+        worker = self._worker_by_digest(release.institution_id, release.tenant_id, release.worker_profile_digest)
+        if worker.artifact_digest != self.current_worker_profile(release.institution_id, release.tenant_id).artifact_digest:
+            raise ValueError("release must bind the current worker profile")
+        self._assert_worker_dependencies_current(worker)
+        if _parse_time("created_at", release.created_at) < _parse_time("worker registered_at", worker.registered_at):
+            raise ValueError("release cannot predate its worker profile")
         history = self.release_history(release.institution_id, release.tenant_id)
         if any(item.release_version == release.release_version for item in history):
             raise ValueError("release_version already exists for tenant")
@@ -550,13 +563,7 @@ class ProductionDeploymentRegistry:
         worker = self._worker_by_digest(release.institution_id, release.tenant_id, release.worker_profile_digest)
         if worker.artifact_digest != self.current_worker_profile(release.institution_id, release.tenant_id).artifact_digest:
             raise ValueError("release worker profile is stale")
-        if worker.egress_policy_digest != self.current_egress_policy(release.institution_id, release.tenant_id).artifact_digest:
-            raise ValueError("release egress policy is stale")
-        if worker.tool_allowlist_policy_digest != self.current_tool_allowlist(release.institution_id, release.tenant_id).artifact_digest:
-            raise ValueError("release tool allowlist is stale")
-        tenant_profile = self._tenant_isolation.current_profile(release.institution_id, release.tenant_id)
-        if worker.tenant_isolation_profile_digest != tenant_profile.artifact_digest:
-            raise ValueError("release tenant isolation profile is stale")
+        self._assert_worker_dependencies_current(worker)
 
     def register_rollback(self, plan: RollbackPlan) -> str:
         source = self._release_by_digest(plan.institution_id, plan.tenant_id, plan.source_release_digest)
