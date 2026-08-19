@@ -8,7 +8,7 @@ The v0.9 core remains deterministic and offline. `deployment.py` creates and val
 
 - exact default-deny TLS/HTTPS egress allowlists;
 - exact governed-tool to external-executor allowlists;
-- isolated policy-enforcement worker profiles;
+- isolated policy-enforcement worker profiles bound to the **current v0.8 tenant-isolation profile**;
 - release manifests bound to source commit, artifact hash, configuration, CodeQL evidence, provenance-attestation evidence and checksum evidence;
 - exact rollback and upgrade plans; and
 - recovery checkpoints bound to encrypted backup, external audit anchor and restore-verification evidence.
@@ -28,13 +28,17 @@ The module does not open sockets, create Kubernetes resources, start containers,
 - no privileged mode;
 - no host network, PID or IPC namespace;
 - no direct tool invocation; and
-- exact tenant-scoped egress/tool-policy plus v0.8 tenant-isolation evidence digests.
+- exact current tenant-scoped egress, tool-allowlist and v0.8 tenant-isolation evidence.
 
-These fields are also fixed in JSON Schema. They are deployment requirements, not proof that a particular runtime has applied them.
+`ProductionDeploymentRegistry` receives the actual v0.8 `TenantIsolationRegistry` as a dependency. Worker registration resolves the exact current tenant profile rather than accepting an unverified digest string. A cross-tenant, unknown or superseded tenant-isolation profile fails closed.
+
+Worker chronology is also constrained: `registered_at` cannot predate the bound egress policy, tool allowlist or tenant-isolation profile. These fields are deployment requirements, not proof that a particular runtime has applied them.
 
 ## Strict egress
 
 `EgressPolicy` is tenant-scoped, append-only and versioned. It is always default deny, forbids wildcard destinations and forbids plaintext transport. Every allowed destination is an exact `https` or generic `tls` host/port pair with a human/institution-defined purpose and a `trust_policy_digest` for the external DNS/TLS identity policy.
+
+Hostname values must use a bounded canonical lowercase form. IP addresses must use the canonical textual representation returned by the IP parser; alternate textual forms of the same IP are rejected so exact endpoint uniqueness cannot be bypassed through address aliases.
 
 RegAgentOps does not resolve DNS or open a connection. Production enforcement belongs to the selected CNI, service mesh, firewall, proxy or equivalent platform control. Wildcard/FQDN expansion or DNS trust cannot be introduced by the RegAgentOps core.
 
@@ -55,6 +59,8 @@ RegAgentOps does not resolve DNS or open a connection. Production enforcement be
 - build-provenance attestation digest; and
 - checksum-manifest digest.
 
+A release cannot claim to predate its worker profile. Release versions are immutable and increase monotonically for the tenant.
+
 The digests are evidence bindings. RegAgentOps does not itself fetch or validate GitHub code-scanning alerts or Sigstore/GitHub attestation bundles.
 
 The repository adds two separate GitHub Actions controls:
@@ -72,9 +78,14 @@ Primary GitHub references used by this milestone:
 
 ## Drift and currentness
 
-A release may remain historical evidence, but `ProductionDeploymentRegistry.assert_release_current()` rejects it for current deployment use when its worker profile, egress policy or tool allowlist has been superseded. A policy change therefore requires an updated worker/release binding instead of silently reusing a stale release manifest.
+A release may remain historical evidence, but `ProductionDeploymentRegistry.assert_release_current()` rejects it for current deployment use when any of these dependencies has been superseded:
 
-The function does not deploy or undeploy anything. It is a fail-closed precondition for a surrounding production controller.
+- worker profile;
+- egress policy;
+- tool allowlist; or
+- v0.8 tenant-isolation profile.
+
+A policy or RLS/tenant-isolation change therefore requires a new worker/release binding instead of silently reusing a stale release manifest. The function does not deploy or undeploy anything; it is a fail-closed precondition for a surrounding production controller.
 
 ## Upgrade and rollback
 
@@ -93,6 +104,18 @@ This prevents an upgrade package from claiming a rollback path that actually poi
 - a restore-verification procedure/result digest.
 
 The checkpoint must not predate its release. It does not prove that a backup is restorable; the disaster-recovery runbook requires an isolated restore test and new verification evidence.
+
+## Chronological provenance
+
+v0.9 prevents downstream deployment artefacts from claiming to exist before their dependencies. In addition to version-history monotonicity:
+
+- worker profile time must be at or after current egress/tool/tenant-isolation policy times;
+- release time must be at or after the bound worker profile;
+- rollback time must be at or after both referenced releases;
+- upgrade time must be at or after its target release and rollback plan; and
+- recovery checkpoint time must be at or after its release.
+
+These are application evidence timestamps, not an independent trusted timestamp authority.
 
 ## Operational runbooks
 
