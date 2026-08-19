@@ -116,6 +116,7 @@ jobs:
           assert regagentops.__version__ == version('regagentops') == '0.5.0'
           assert regagentops.mcp.MCP_MAX_TOOLS_PER_SNAPSHOT == 128
           assert regagentops.execution.EXECUTION_LEASE_MAX_SECONDS == 120
+          assert regagentops.execution.EXECUTION_AUTHORIZATION_MAX_AGE_SECONDS == 120
           PY
           /tmp/regagentops-smoke/bin/regagentops demo-decision > /tmp/regagentops-decision.json
           /tmp/regagentops-smoke/bin/python - <<'PY'
