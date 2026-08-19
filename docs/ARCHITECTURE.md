@@ -1,12 +1,16 @@
 # RegAgentOps Architecture
 
-## v0.6 boundary
+## v0.7 boundary
 
-RegAgentOps v0.6 is an **offline authenticated authorization, data/purpose governance, human-approval, MCP-governance and signed execution-evidence control plane**. v0.6 does not create a parallel policy language: the existing authenticated policy decision remains authoritative, while institution-owned data-resource profiles and exact request-bound data-use declarations can only preserve, constrain or deny that path.
+RegAgentOps v0.7 is an **offline authenticated authorization, data/purpose governance, human-approval, MCP-governance, signed execution-evidence and human-reviewed assurance-evidence control plane**.
 
-It still does **not** discover data, scan for PII, infer legal purpose, connect to an MCP server, obtain production credentials, redact output bytes or invoke a requested tool.
+The v0.7 assurance layer is intentionally downstream and non-authoritative for execution: it crosswalks exact evidence digests to human-confirmed framework references, but it cannot widen an authorization decision, satisfy an approval requirement, issue an execution lease or create a regulatory/compliance conclusion.
+
+It still does **not** discover data, scan for PII, infer legal purpose, determine framework applicability, classify EU AI Act risk, retrieve framework text, connect to MCP servers, obtain production credentials, redact output bytes or invoke a requested tool.
 
 ```text
+                    EXECUTION CONTROL PLANE
+
 OIDC + pinned trust             Institution workload signer
         \                               /
          +---- Signed authenticated agent ----+
@@ -47,104 +51,172 @@ AgentActionEnvelope ------+------ PolicyBundle
                           |
                           v
              SignedToolExecutionReceipt
+
+                    ASSURANCE EVIDENCE PLANE
+
+       external system/deployment context digest
+                          |
+                          v
+                    AssuranceScope
+                          |
+                  human applicability
+                          v
+          AssuranceApplicabilityAssertion
+                /                    \
+               /                      \
+      exact evidence digests          explicit GAP / N/A
+             |                         |
+             v                         |
+  AssuranceEvidenceReference           |
+             \                         /
+              +-----------------------+
+                          |
+                          v
+              AssuranceCrosswalkEntry
+                          |
+                          v
+              AssuranceEvidencePackage
 ```
 
-## Data-resource identity and classification
+## Assurance scope identity
 
-`DataResourceProfile` is institution-scoped, append-only and contiguously versioned for an exact resource identifier. It binds the resource to a governed `DataClassification`, exact data-category tuple, primary purposes, explicitly compatible secondary purposes, permitted output handling modes, redaction requirements, retention ceiling, enabled state and registration time.
+`AssuranceScope` binds an assurance review to one institution, AI-system identifier, deployment identifier, accountable human owner, environment and an exact SHA-256 digest of the external deployment/system context record.
 
-The data categories are governance labels rather than automatic legal classifications. v0.6 performs no fuzzy resource matching or autonomous discovery: a request must resolve to an exact current enabled profile.
+The core does not ingest or interpret that external context document. The digest makes scope substitution detectable while leaving inventory, architecture, model-card, risk-assessment or deployment records in their source systems.
 
-A newer resource-profile version invalidates the old profile for current authorization while retaining the historical artifact for evidence.
+## Pinned framework-version boundary
 
-## Request-bound data use
+v0.7 recognizes three framework namespaces with explicit versions:
 
-`DataUseDeclaration` binds the exact `AgentActionEnvelope` digest, exact resource, business purpose, observed data categories, requested output handling and retention period. The declaration cannot predate the request and cannot be future-dated relative to evaluation.
+- `nist_ai_rmf` → `1.0`;
+- `iso_iec_42001` → `2023`;
+- `eu_ai_act` → `2024/1689`.
 
-The declared observed categories must exactly equal the current resource-profile categories. This is intentionally stricter than subset matching because subset matching permits a caller to omit a sensitive category and obtain weaker controls.
+The pin is enforced in Python and JSON Schema. A framework revision cannot silently change historical or current crosswalk semantics; support for a new version requires an explicit software/contract update.
 
-## Purpose limitation and compatibility
+`reference_id` is intentionally operator supplied. RegAgentOps does not embed or validate full normative framework text and therefore does not act as a framework-content authority.
 
-The base `PolicyBundle` still decides whether the agent/tool/action/purpose combination is authorized. v0.6 independently verifies whether the same purpose is permitted for the governed resource.
+## Human-confirmed applicability
 
-A profile primary purpose is directly eligible. An explicitly compatible secondary purpose is allowed only with a `purpose:compatible-secondary-use` constraint. A purpose outside both sets fails closed.
+`AssuranceApplicabilityAssertion` is a required artefact, not a derived boolean. It binds:
 
-Purpose compatibility is institution-owned configuration. Tool descriptions, MCP annotations, prompts and model output cannot create or widen a compatibility relationship.
+- exact assurance-scope digest;
+- framework and pinned framework version;
+- operator-supplied framework reference identifier;
+- `APPLICABLE` or `NOT_APPLICABLE` status;
+- human confirmation basis;
+- confirming human identity; and
+- confirmation time.
 
-## Sensitive-data, output and retention constraints
+No prompt, model output, policy decision, data classification, risk tier or tool metadata can automatically create framework applicability.
 
-Sensitive categories emit `data:minimize`. Positive decisions also bind the required output mode and requested retention behavior into authorization constraints.
+For EU AI Act mappings, the assertion additionally carries at least one human-confirmed operator role: provider, deployer, authorised representative, importer, distributor or product manufacturer. EU-role fields are rejected for NIST AI RMF and ISO/IEC 42001 assertions.
 
-If raw output is requested for categories requiring redaction, the evaluator deterministically selects a permitted safer mode in this order: redacted, aggregated, metadata-only. If no safe permitted mode exists, authorization is denied. The core records the requirement but does not transform bytes itself.
+The human identity field is evidence metadata rather than a new signed identity protocol. Cryptographically signed configuration/change-control is intentionally deferred to v0.8.
 
-Retention above the resource ceiling is denied. A positive decision records either `retention:no-persist` or `retention:seconds=<n>`. The configured ceiling is a technical governance bound, not a legal recommendation.
+## Evidence references
 
-## Evidence linkage
+`AssuranceEvidenceReference` binds an evidence identifier to:
 
-`DataGovernanceDecision` binds:
+- exact assurance scope;
+- exact subject artifact SHA-256 digest;
+- artifact type;
+- artifact schema version;
+- source component; and
+- evidence-recording time.
 
-- exact request digest;
-- exact `DataUseDeclaration` digest;
-- exact current `DataResourceProfile` digest;
-- institution data-governance registry snapshot digest;
-- purpose and governed categories;
-- requested output handling and retention;
-- resulting decision, constraints and reasons; and
-- evaluation time.
+The record is a digest reference. It does not independently establish external artifact existence, truthfulness, completeness, immutability or legal sufficiency.
 
-Its SHA-256 artifact digest is inserted into `AuthorizationDecision.governance_evidence_digests`. Because `AuthenticatedAuthorizationDecision` contains that authorization object, the authenticated-authorization digest commits to the exact v0.6 evidence.
+Earlier RegAgentOps artefacts can be referenced without changing their schemas: authenticated authorization decisions, data-governance decisions, approval resolutions, MCP policy-enforcement results, execution leases, signed execution receipts and other evidence can be addressed by digest.
 
-The v0.5 `ExecutionLease` and `ToolExecutionReceipt` already bind the authenticated-authorization digest. v0.6 therefore extends execution evidence without creating a second lease or receipt format.
+## Crosswalk semantics
 
-When base policy requires human approval, the data-governance decision remains separately available and its digest remains bound into the authenticated authorization. Approval cannot turn a v0.6 data-governance `DENY` into continuation.
+`AssuranceCrosswalkEntry` binds one exact human applicability assertion to zero or more exact evidence-reference digests and one coverage state:
 
-## MCP composition
+`SUPPORTED | PARTIAL | GAP | NOT_APPLICABLE`
 
-`DataPurposeMcpPolicyEnforcementPoint` layers v0.6 over the existing `McpPolicyEnforcementPoint`. The v0.4 adapter still performs MCP server/tool currentness and authenticated policy evaluation. v0.6 then applies the request-bound resource/purpose guardrail and rebuilds the standard MCP result around the governed authenticated authorization.
+These states describe evidence coverage, not compliance.
 
-This preserves the existing `McpPolicyEnforcementOutcome` contract for approval and execution integration. No MCP annotation becomes data-policy authority.
+- `SUPPORTED` and `PARTIAL` require at least one evidence reference.
+- `GAP` and `NOT_APPLICABLE` forbid evidence references.
+- a human `NOT_APPLICABLE` assertion can only produce `NOT_APPLICABLE` coverage;
+- a human `APPLICABLE` assertion cannot be rewritten to `NOT_APPLICABLE`.
 
-## Execution currentness
+Every mapping requires a human mapper identity, rationale and mapping time. The registry does not infer coverage from the number or type of artifacts.
 
-`DataGovernedExecutionGate` wraps the v0.5 `ExecutionGate`. It requires a positive `DataGovernanceDecision` and, before lease issuance and again before redemption, checks:
+## Assurance package integrity
 
-- the institution data-governance registry snapshot is unchanged; and
-- the exact resource profile referenced by the authorization is still current.
+`AssuranceEvidencePackage` is assembled from exact registered crosswalk-entry digests for one scope. The package contains the derived exact sets of:
 
-Any data-governance drift invalidates the old execution path. The underlying execution gate continues to enforce MCP currentness, emergency-stop state, authorization freshness, executor binding, one-time lease redemption and receipt provenance.
+- crosswalk-entry digests;
+- applicability-assertion digests;
+- evidence-reference digests; and
+- framework namespaces.
 
-## Existing boundaries retained
+`AssuranceEvidenceRegistry.verify_package()` resolves those exact entries and recomputes the expected assertion/evidence/framework sets. Substitution, unknown digests or cross-scope references fail closed.
 
-v0.1 deterministic default-deny policy precedence remains:
+Package semantics are structurally constrained:
+
+- `certification_claimed` must be `false`;
+- `conformity_claimed` must be `false`;
+- `legal_compliance_determined` must be `false`; and
+- `requires_human_review` must be `true`.
+
+The assurance layer therefore cannot manufacture a valid object that represents itself as an ISO certificate, conformity statement or legal-compliance determination.
+
+## Relationship to execution authorization
+
+v0.7 is one-way with respect to earlier governance evidence:
+
+```text
+v0.1-v0.6 artifacts --> assurance evidence references --> crosswalk/package
+
+assurance package -X-> policy allow
+assurance package -X-> approval continuation
+assurance package -X-> execution lease
+```
+
+No v0.7 class is accepted by the policy engine, approval gate, MCP PEP or execution gate. An assurance mapping cannot override `DENY`, satisfy `REQUIRE_HUMAN_APPROVAL`, relax data constraints, suppress emergency stop or make stale governance current.
+
+## Existing authorization and execution boundaries retained
+
+v0.1 policy precedence remains:
 
 `DENY > REQUIRE_HUMAN_APPROVAL > ALLOW_WITH_CONSTRAINTS > ALLOW`
 
-v0.2 signed authenticated identity remains mandatory for positive authenticated authorization. v0.3 human approval cannot override denial. v0.4 MCP governance remains bounded and non-executing. v0.5 execution leases remain short-lived, one-time, executor-bound and non-invoking from the RegAgentOps core.
+v0.2 signed authenticated identity remains mandatory. v0.3 approval cannot override denial. v0.4 MCP governance remains explicit and non-executing. v0.5 leases remain short-lived, one-time and executor-bound. v0.6 data-purpose governance remains exact, request-bound and currentness checked before execution.
+
+The authenticated-authorization and signed-receipt chains are not modified by v0.7.
 
 ## Trust boundaries
 
-1. **Caller → identity/policy plane**: request and identity inputs are untrusted until verified.
-2. **Institution data governance → data registry**: resource classifications, categories, purpose compatibility, output modes, redaction rules and retention ceilings are privileged governance configuration.
-3. **Caller → data-use declaration**: declaration fields are untrusted claims until exact request/profile checks pass.
-4. **Data registry → authenticated authorization**: only the exact current profile and deterministic decision digest cross as governance evidence; profile text does not bypass policy precedence.
-5. **Institution MCP configuration → MCP registry**: server approvals, pins and tool bindings remain privileged configuration.
-6. **Authenticated authorization → approval gate**: approval binds the exact authorization and cannot override a denial.
-7. **MCP/data/approval evidence → execution gate**: currentness is revalidated before lease issuance/redemption; caller booleans are insufficient.
-8. **Execution gate → external executor**: one-time consumption is the final RegAgentOps pre-dispatch boundary; invocation remains external.
-9. **External executor → signed receipt**: represented result digest/outcome is signed evidence, not independently observed truth.
+1. **Caller → identity/policy plane**: action and identity inputs remain untrusted until verified.
+2. **Institution data governance → data registry**: resource categories, purpose compatibility, output and retention configuration remain privileged governance input.
+3. **Institution MCP configuration → MCP registry**: server approvals, pins and tool bindings remain privileged configuration.
+4. **Authenticated authorization → approval/execution**: exact digests and current state remain execution authority; assurance objects are not accepted here.
+5. **External assurance context → `AssuranceScope`**: the caller provides an exact context digest; RegAgentOps does not interpret the source record.
+6. **Human reviewer → applicability assertion**: framework applicability and EU operator roles are accountable human assertions, not machine-derived facts.
+7. **Evidence source → evidence reference**: exact subject digests cross into the assurance registry; source truth/immutability is not independently proven.
+8. **Human mapper → crosswalk entry**: coverage and rationale are human judgments constrained by exact assertion/evidence linkage.
+9. **Crosswalk registry → evidence package**: selected exact entries determine package contents; package verification rejects digest-set substitution.
+10. **Assurance package → external auditor/legal/compliance process**: the package is organized evidence only; acceptance, sufficiency and legal conclusions remain external.
 
 ## Historical evidence versus current state
 
-Resource-profile versions, data-governance decisions, MCP registrations/snapshots/bindings, approval artifacts, emergency-stop states and execution consumptions remain historical evidence. Current execution is stricter: exact current MCP state, data-governance state and emergency-stop state must still satisfy the unconsumed path.
+The assurance registry is append-only by identity: reusing a scope/assertion/evidence/entry identity with different content fails. New entries do not rewrite old package digests.
 
-A later governance change does not rewrite a historical signed receipt. It prevents stale authorization evidence from authorizing a new execution.
+Unlike the v0.5/v0.6 execution path, assurance packages are historical review artifacts and are not required to become invalid merely because new evidence is later registered. A new review can assemble a new package when scope, applicability or evidence changes.
 
 ## Capability separation
 
-Authorization, identity, approval, MCP-governance, execution and data-governance modules are statically checked in CI to reject network/process capability imports. Data governance contains no DLP scanner, data connector, semantic inference service, redaction engine or tool invocation interface.
+Authorization, identity, approval, MCP-governance, execution, data-governance and assurance modules are statically checked in CI to reject network/process capability imports.
 
-Production credential brokerage, data-discovery/DLP integrations, deletion enforcement, network-isolated execution workers and external immutable audit anchoring remain outside this milestone.
+`assurance.py` contains no framework web client, document scraper, legal classifier, automatic applicability engine, certification scorer, MCP connection or tool invocation interface. It consumes explicit human and digest artefacts only.
+
+Signed configuration change control, tenant-isolated durable storage, KMS/HSM keys and external immutable audit anchoring remain v0.8 concerns.
 
 ## Standards posture
 
-RegAgentOps uses NIST AI RMF, OpenID/JWT security guidance, workload-identity concepts and MCP trust/safety guidance as design inputs. The data-purpose labels and controls are reference governance constructs rather than claims of legal classification, protocol conformance or certification.
+NIST AI RMF 1.0, ISO/IEC 42001:2023 and Regulation (EU) 2024/1689 are framework/version namespaces for evidence mapping. RegAgentOps does not reproduce full normative text or claim that a mapped reference has been legally or auditorily satisfied.
+
+A `SUPPORTED` crosswalk state means only that a human mapper associated exact evidence with that reference for the exact assurance scope. It is not a compliance, conformity or certification result.
