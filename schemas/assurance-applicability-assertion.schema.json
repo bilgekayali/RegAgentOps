@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RegAgentOps Assurance Applicability Assertion",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["assertion_id","institution_id","scope_digest","framework","framework_version","reference_id","applicability","eu_ai_act_roles","confirmation_basis","confirmed_by_human_id","confirmed_at","schema_version"],
+  "properties": {
+    "assertion_id": {"type":"string","minLength":1,"maxLength":256},
+    "institution_id": {"type":"string","minLength":1,"maxLength":256},
+    "scope_digest": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "framework": {"enum":["nist_ai_rmf","iso_iec_42001","eu_ai_act"]},
+    "framework_version": {"type":"string","minLength":1,"maxLength":64},
+    "reference_id": {"type":"string","minLength":1,"maxLength":256},
+    "applicability": {"enum":["applicable","not_applicable"]},
+    "eu_ai_act_roles": {
+      "type":"array",
+      "uniqueItems": true,
+      "items": {"enum":["provider","deployer","authorised_representative","importer","distributor","product_manufacturer"]}
+    },
+    "confirmation_basis": {"type":"string","minLength":1,"maxLength":1024},
+    "confirmed_by_human_id": {"type":"string","minLength":1,"maxLength":256},
+    "confirmed_at": {"type":"string","format":"date-time","pattern":"Z$"},
+    "schema_version": {"const":"regagentops.assurance-applicability-assertion.v1"}
+  },
+  "allOf": [
+    {
+      "if": {"properties":{"framework":{"const":"nist_ai_rmf"}},"required":["framework"]},
+      "then": {"properties":{"framework_version":{"const":"1.0"},"eu_ai_act_roles":{"maxItems":0}}}
+    },
+    {
+      "if": {"properties":{"framework":{"const":"iso_iec_42001"}},"required":["framework"]},
+      "then": {"properties":{"framework_version":{"const":"2023"},"eu_ai_act_roles":{"maxItems":0}}}
+    },
+    {
+      "if": {"properties":{"framework":{"const":"eu_ai_act"}},"required":["framework"]},
+      "then": {"properties":{"framework_version":{"const":"2024/1689"},"eu_ai_act_roles":{"minItems":1}}}
+    }
+  ]
+}
