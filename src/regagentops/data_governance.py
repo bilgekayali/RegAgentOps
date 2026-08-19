@@ -466,6 +466,31 @@ class DataPurposeMcpPolicyEnforcementOutcome:
     mcp_outcome: McpPolicyEnforcementOutcome
     data_governance: DataGovernanceDecision | None
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.mcp_outcome, McpPolicyEnforcementOutcome):
+            raise ValueError("v0.6 outcome requires an exact MCP policy-enforcement outcome")
+        mcp = self.mcp_outcome
+        decision = self.data_governance
+        if decision is None:
+            if mcp.result.decision is not Decision.DENY:
+                raise ValueError("non-DENY v0.6 outcome requires bound data-governance evidence")
+            return
+        if not isinstance(decision, DataGovernanceDecision):
+            raise ValueError("v0.6 outcome data_governance must be a DataGovernanceDecision")
+        if decision.institution_id != mcp.request.institution_id or decision.request_digest != mcp.request.artifact_digest:
+            raise ValueError("data-governance decision scope does not match MCP request")
+        if decision.evaluated_at != mcp.result.evaluated_at:
+            raise ValueError("data-governance decision must use the MCP evaluation time")
+        if mcp.authorization is None:
+            raise ValueError("data-governance evidence requires authenticated authorization")
+        if decision.artifact_digest not in mcp.authorization.authorization.governance_evidence_digests:
+            raise ValueError("data-governance decision is not bound into authenticated authorization evidence")
+        if decision.decision is Decision.DENY:
+            if mcp.result.decision is not Decision.DENY:
+                raise ValueError("data-governance DENY must produce an MCP DENY result")
+        elif mcp.result.decision is Decision.DENY:
+            raise ValueError("positive data-governance evidence cannot accompany an MCP DENY result")
+
 
 class DataPurposeMcpPolicyEnforcementPoint:
     """v0.6 single-pass adapter layering data governance over one exact v0.4 MCP PEP outcome."""
@@ -539,6 +564,9 @@ class DataGovernedExecutionGate:
             raise ValueError("data-governed execution requires a v0.6 MCP outcome")
         if outcome.data_governance is None:
             raise ValueError("positive execution requires data governance evidence")
+        authorization = outcome.mcp_outcome.authorization
+        if authorization is None or outcome.data_governance.artifact_digest not in authorization.authorization.governance_evidence_digests:
+            raise ValueError("data-governance decision is not bound into authenticated authorization evidence")
         self._data.assert_decision_current(outcome.data_governance)
         return outcome.mcp_outcome
 
