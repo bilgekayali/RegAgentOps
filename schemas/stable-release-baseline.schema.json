@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://regagentops.example/schemas/stable-release-baseline.schema.json",
+  "title": "StableReleaseBaseline",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "boundaryEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["boundary", "artifact_digest", "evidence_description_digest"],
+      "properties": {
+        "boundary": {
+          "enum": [
+            "authorization",
+            "authenticated_identity",
+            "human_approval",
+            "mcp_governance",
+            "execution_receipts",
+            "data_purpose",
+            "assurance",
+            "tenant_crypto",
+            "production_reference"
+          ]
+        },
+        "artifact_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "evidence_description_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  },
+  "required": [
+    "release_id",
+    "release_version",
+    "compatibility_policy_digest",
+    "public_surface_manifest_digest",
+    "production_release_manifest_digest",
+    "supported_upgrade_path_digest",
+    "security_review_checklist_digest",
+    "responsibility_scope_digest",
+    "reproducible_checksum_manifest_digest",
+    "provenance_attestation_digest",
+    "boundary_evidence",
+    "assembled_at",
+    "schema_version"
+  ],
+  "properties": {
+    "release_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "release_version": {"const": "1.0.0"},
+    "compatibility_policy_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "public_surface_manifest_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "production_release_manifest_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "supported_upgrade_path_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "security_review_checklist_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "responsibility_scope_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "reproducible_checksum_manifest_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "provenance_attestation_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "boundary_evidence": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 9,
+      "prefixItems": [
+        {"allOf": [{"$ref": "#/$defs/boundaryEvidence"}, {"properties": {"boundary": {"const": "authorization"}}}]},
+        {"allOf": [{"$ref": "#/$defs/boundaryEvidence"}, {"properties": {"boundary": {"const": "authenticated_identity"}}}]},
+        {"allOf": [{"$ref": "#/$defs/boundaryEvidence"}, {"properties": {"boundary": {"const": "human_approval"}}}]},
+        {"allOf": [{"$ref": "#/$defs/boundaryEvidence"}, {"properties": {"boundary": {"const": "mcp_governance"}}}]},
+        {"allOf": [{"$ref": "#/$defs/boundaryEvidence"}, {"properties": {"boundary": {"const": "execution_receipts"}}}]},
+        {"allOf": [{"$ref": "#/$defs/boundaryEvidence"}, {"properties": {"boundary": {"const": "data_purpose"}}}]},
+        {"allOf": [{"$ref": "#/$defs/boundaryEvidence"}, {"properties": {"boundary": {"const": "assurance"}}}]},
+        {"allOf": [{"$ref": "#/$defs/boundaryEvidence"}, {"properties": {"boundary": {"const": "tenant_crypto"}}}]},
+        {"allOf": [{"$ref": "#/$defs/boundaryEvidence"}, {"properties": {"boundary": {"const": "production_reference"}}}]}
+      ],
+      "items": false
+    },
+    "assembled_at": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"},
+    "schema_version": {"const": "regagentops.stable-release-baseline.v1"}
+  }
+}

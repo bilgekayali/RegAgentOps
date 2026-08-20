@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://regagentops.example/schemas/independent-security-review-checklist.schema.json",
+  "title": "IndependentSecurityReviewChecklist",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "reviewItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item_id",
+        "status",
+        "evidence_digest",
+        "reviewer_rationale_digest",
+        "risk_acceptance_human_id",
+        "risk_acceptance_digest"
+      ],
+      "properties": {
+        "item_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "status": {"enum": ["closed", "risk_accepted"]},
+        "evidence_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "reviewer_rationale_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "risk_acceptance_human_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 256},
+        "risk_acceptance_digest": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "closed"}}, "required": ["status"]},
+          "then": {
+            "properties": {
+              "risk_acceptance_human_id": {"const": null},
+              "risk_acceptance_digest": {"const": null}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "risk_accepted"}}, "required": ["status"]},
+          "then": {
+            "properties": {
+              "risk_acceptance_human_id": {"type": "string", "minLength": 1, "maxLength": 256},
+              "risk_acceptance_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            }
+          }
+        }
+      ]
+    }
+  },
+  "required": [
+    "review_id",
+    "release_version",
+    "reviewer_id",
+    "reviewer_independence_confirmed",
+    "items",
+    "reviewed_at",
+    "schema_version"
+  ],
+  "properties": {
+    "review_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "release_version": {"const": "1.0.0"},
+    "reviewer_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "reviewer_independence_confirmed": {"const": true},
+    "items": {
+      "type": "array",
+      "minItems": 12,
+      "maxItems": 12,
+      "items": {"$ref": "#/$defs/reviewItem"},
+      "allOf": [
+        {"contains": {"properties": {"item_id": {"const": "approval-replay-and-delegation"}}, "required": ["item_id"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"item_id": {"const": "assurance-non-claims"}}, "required": ["item_id"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"item_id": {"const": "authenticated-identity-binding"}}, "required": ["item_id"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"item_id": {"const": "authorization-default-deny"}}, "required": ["item_id"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"item_id": {"const": "capability-creep"}}, "required": ["item_id"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"item_id": {"const": "data-purpose-and-retention"}}, "required": ["item_id"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"item_id": {"const": "execution-lease-and-receipts"}}, "required": ["item_id"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"item_id": {"const": "mcp-server-tool-binding"}}, "required": ["item_id"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"item_id": {"const": "production-egress-tool-worker"}}, "required": ["item_id"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"item_id": {"const": "release-provenance-and-reproducibility"}}, "required": ["item_id"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"item_id": {"const": "tenant-isolation-and-crypto-lifecycle"}}, "required": ["item_id"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"item_id": {"const": "upgrade-rollback-and-recovery"}}, "required": ["item_id"]}, "minContains": 1, "maxContains": 1}
+      ]
+    },
+    "reviewed_at": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"},
+    "schema_version": {"const": "regagentops.independent-security-review-checklist.v1"}
+  }
+}

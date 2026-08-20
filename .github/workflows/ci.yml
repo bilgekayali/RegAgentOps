@@ -18,8 +18,8 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install package
@@ -28,7 +28,7 @@ jobs:
         run: python -m compileall -q src
       - name: Run tests
         run: python -m unittest discover -s tests -v
-      - name: Enforce offline authorization identity approval MCP execution data assurance hardening and deployment boundary
+      - name: Enforce offline authorization identity approval MCP execution data assurance hardening deployment and stability boundary
         shell: bash
         run: |
           python - <<'PY'
@@ -41,6 +41,7 @@ jobs:
               Path("src/regagentops/registry.py"),
               Path("src/regagentops/policy.py"),
               Path("src/regagentops/cli.py"),
+              Path("src/regagentops/api.py"),
               Path("src/regagentops/identity_models.py"),
               Path("src/regagentops/oidc.py"),
               Path("src/regagentops/workload_identity.py"),
@@ -59,6 +60,7 @@ jobs:
               Path("src/regagentops/assurance.py"),
               Path("src/regagentops/hardening.py"),
               Path("src/regagentops/deployment.py"),
+              Path("src/regagentops/stability.py"),
           ]
           for path in core_files:
               source = path.read_text(encoding="utf-8")
@@ -106,13 +108,20 @@ jobs:
           ):
               if marker in deployment_source:
                   raise SystemExit(f"deployment reference core must remain non-deploying/offline: {marker}")
+          stability_source = Path("src/regagentops/stability.py").read_text(encoding="utf-8")
+          for marker in (
+              "requests.", "httpx.", "socket.", "subprocess.", ".connect(", ".deploy(",
+              ".invoke(", ".execute_tool(", "create_release(", "create_tag("
+          ):
+              if marker in stability_source:
+                  raise SystemExit(f"stable release core must remain evidence-only/offline: {marker}")
           PY
 
   package-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: Build package
@@ -128,6 +137,7 @@ jobs:
           /tmp/regagentops-smoke/bin/python - <<'PY'
           from importlib.metadata import version
           import regagentops
+          import regagentops.api
           import regagentops.approval_authority
           import regagentops.approval_engine
           import regagentops.approval_replay
@@ -142,8 +152,9 @@ jobs:
           import regagentops.identity_binding
           import regagentops.mcp
           import regagentops.oidc
+          import regagentops.stability
           import regagentops.workload_identity
-          assert regagentops.__version__ == version('regagentops') == '0.9.0'
+          assert regagentops.__version__ == version('regagentops') == '1.0.0'
           assert regagentops.mcp.MCP_MAX_TOOLS_PER_SNAPSHOT == 128
           assert regagentops.execution.EXECUTION_LEASE_MAX_SECONDS == 120
           assert regagentops.execution.EXECUTION_AUTHORIZATION_MAX_AGE_SECONDS == 120
@@ -156,12 +167,20 @@ jobs:
           assert regagentops.hardening.CryptoAlgorithm.AES_256_GCM.value == 'AES-256-GCM'
           assert regagentops.deployment.EgressProtocol.HTTPS.value == 'https'
           assert regagentops.deployment.EgressProtocol.TLS.value == 'tls'
+          assert regagentops.stability.STABLE_VERSION == '1.0.0'
+          assert 'StableReleaseRegistry' in regagentops.api.__all__
           PY
           /tmp/regagentops-smoke/bin/regagentops demo-decision > /tmp/regagentops-decision.json
+          /tmp/regagentops-smoke/bin/regagentops contract-snapshot > /tmp/regagentops-contract.json
           /tmp/regagentops-smoke/bin/python - <<'PY'
           import json
           from pathlib import Path
-          payload = json.loads(Path('/tmp/regagentops-decision.json').read_text())
-          assert payload['execution_performed'] is False
-          assert payload['decision']['decision'] == 'ALLOW_WITH_CONSTRAINTS'
+          decision = json.loads(Path('/tmp/regagentops-decision.json').read_text())
+          contract = json.loads(Path('/tmp/regagentops-contract.json').read_text())
+          assert decision['execution_performed'] is False
+          assert decision['decision']['decision'] == 'ALLOW_WITH_CONSTRAINTS'
+          assert contract['release_version'] == '1.0.0'
+          assert contract['stable_since_version'] == '1.0.0'
+          assert contract['stable_cli_commands'] == ['contract-snapshot', 'demo-decision']
+          assert contract['execution_performed'] is False
           PY
