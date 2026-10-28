@@ -8,16 +8,6 @@ Source package version: **1.0.0 — Stable Governance Reference**.
 
 > **Release-readiness note:** the v1 code/contract boundary can be technically complete and merge-ready without implying that an independent human security review has occurred. The `v1.0.0` tagged-release workflow remains fail-closed until a genuine `security-review/v1.0-review.json` artefact is supplied.
 
-## Executive overview — 30 seconds
-
-**Problem:** AI agents in regulated organisations need authenticated authority, bounded tool access, human approvals and auditable decisions—not merely model-generated intentions.
-
-**Reference solution:** An agent-governance control plane that expresses policy and delegated-authority boundaries as inspectable contracts, records evidence and keeps release/deployment safeguards explicit.
-
-**Inspect the work:** [Source code](src/) · [Automated tests](tests/) · [Public contracts](schemas/) · [Security guidance](SECURITY.md).
-
-**Status and limits:** Source package v1.0.0, **stable governance reference**. The independent human security-review artefact required for a formally promoted stable tag is still outstanding. This repository does not establish independent certification, a live enterprise rollout or production-safe autonomous agents.
-
 ## What RegAgentOps controls
 
 RegAgentOps addresses five bounded questions:
